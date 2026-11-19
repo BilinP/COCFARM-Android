@@ -1,0 +1,23 @@
+# farmbot/ files left out of the Android app (copyBot in build.gradle.kts):
+# the Windows app's window, its emulators, and what only Windows has.
+# One Ant-style pattern per line, relative to farmbot/. check_imports.py
+# reads this list too, and checks nothing the app ships imports them.
+**/__pycache__/**
+__main__.py
+cli.py
+gui.py
+gui_wake.py
+splash.py
+window.py
+tour.py
+icons.py
+glyphs.py
+bluestacks.py
+ldplayer.py
+mumu.py
+ports.py
+open_now.py
+installed.py
+whatsnew.py
+ocr.ps1
+ocr_lines.ps1

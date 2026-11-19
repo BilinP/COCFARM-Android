@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-files-path name="update" path="_update/" />
+    <external-files-path name="logs" path="logs/" />
+    <!-- attacks.csv (History's Share): only a file COCFARM hands out itself can be read -->
+    <external-files-path name="files" path="." />
+</paths>

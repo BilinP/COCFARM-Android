@@ -1,0 +1,172 @@
+name: android-apk
+
+# Builds COCFARM for Android (android/) on every push to the android branch
+# and keeps the app as the run's artifact. Pushing a tag like android-v1.9.2
+# (the version must be farmbot/__init__.py's) also publishes it, when signed
+# with the release key, as a release with three downloads: COCFARM-android.apk
+# for every phone, and COCFARM-android-arm64.apk and COCFARM-android-x86_64.apk,
+# each about half its size (the app takes the one for its processor).
+#
+# This is the Android app's own repository (BilinP/COCFARM-Android): the
+# Windows app's releases are in BilinP/COCFARM, so neither app is ever
+# offered the other's update. Phones find the newest release here that has
+# COCFARM-android.apk (see farmbot/update.py), and only take one newer than
+# theirs.
+#
+# Signing uses three repository secrets (Settings → Secrets and variables →
+# Actions):
+#   ANDROID_KEYSTORE_BASE64  the release keystore, base64-encoded
+#   ANDROID_KEY_ALIAS        the key's alias in it
+#   COCFARM_KEY_PASSWORD     its password (the keystore's and the key's)
+# Without them (a fork, say) a debug build is made instead: fine for trying
+# out, but it can't update an installed release build, so it's never
+# published.
+
+on:
+  push:
+    branches: [android]
+    # Not "v*": those are the Windows app's (main's windows-exe).
+    tags: ["android-v*"]
+  pull_request:
+    branches: [android]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APK: COCFARM-android.apk
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Chaquopy prepares the app's Python packages with the same Python
+      # version the app runs (3.10, see app/build.gradle.kts).
+      - uses: actions/setup-python@v7
+        id: python
+        with:
+          python-version: "3.10"
+
+      # Python import errors only show on a phone: every module the app ships
+      # is imported here first, as the phone would (see android/check_imports.py),
+      # with NumPy and OpenCV as close as pip has to the app's (1.26.2, 4.5.1).
+      - name: Check the app's Python imports
+        shell: bash
+        run: |
+          python -m pip install --quiet "numpy==1.26.2" "opencv-python-headless==4.5.4.60" tomli
+          python android/check_imports.py
+
+      # The runner has the Android SDK (ANDROID_HOME); with its licences
+      # accepted, Gradle fetches the platform and build tools the app needs.
+      - name: Accept the Android SDK licences
+        shell: bash
+        run: (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic  # actions/cache underneath: open source, no outside service
+
+      - name: Read the version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' farmbot/__init__.py)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/android-v* && "$GITHUB_REF_NAME" != "android-v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the app's version $version (tag android-v$version)"; exit 1
+          fi
+          echo "COCFARM $version for Android"
+
+      - name: Set up the release key
+        id: key
+        shell: bash
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PASSWORD: ${{ secrets.COCFARM_KEY_PASSWORD }}
+        run: |
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "python.path=${{ steps.python.outputs.python-path }}"
+          } > android/local.properties
+          if [[ -z "$KEYSTORE" || -z "$ALIAS" || -z "$PASSWORD" ]]; then
+            echo "::warning::No release key secrets: making a debug build, which isn't attached to a release."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          key="$RUNNER_TEMP/cocfarm-key"
+          mkdir -p "$key"
+          echo "$KEYSTORE" | base64 --decode > "$key/release.keystore"
+          printf 'storeFile=%s\nkeyAlias=%s\n' "$key/release.keystore" "$ALIAS" > "$key/keystore.properties"
+          echo "release.keystore=$key/keystore.properties" >> android/local.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        working-directory: android
+        shell: bash
+        env:
+          COCFARM_KEY_PASSWORD: ${{ secrets.COCFARM_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          if [[ "${{ steps.key.outputs.signed }}" == "true" ]]; then type=release; else type=debug; fi
+          ./gradlew --no-daemon "assemble${type^}"
+          out=app/build/outputs/apk
+          cp "$out/universal/$type/app-universal-$type.apk" "$GITHUB_WORKSPACE/$APK"
+          cp "$out/arm64/$type/app-arm64-$type.apk" "$GITHUB_WORKSPACE/COCFARM-android-arm64.apk"
+          cp "$out/x86/$type/app-x86-$type.apk" "$GITHUB_WORKSPACE/COCFARM-android-x86_64.apk"
+
+      - name: Check the signature
+        shell: bash
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          for apk in "$APK" COCFARM-android-arm64.apk COCFARM-android-x86_64.apk; do
+            certs=$("$apksigner" verify --print-certs "$apk")
+            echo "$apk: $certs"
+            if [[ "${{ steps.key.outputs.signed }}" == "true" ]] && ! grep -q "CN=COCFARM" <<<"$certs"; then
+              echo "::error::$apk isn't signed with COCFARM's release key"
+              exit 1
+            fi
+            echo "SHA-256 $(sha256sum "$apk" | cut -d' ' -f1), $(du -h "$apk" | cut -f1)"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: COCFARM-android-${{ steps.version.outputs.version }}${{ steps.key.outputs.signed != 'true' && '-debug' || '' }}
+          path: |
+            ${{ env.APK }}
+            COCFARM-android-arm64.apk
+            COCFARM-android-x86_64.apk
+          retention-days: 30
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/android-v') && steps.key.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: COCFARM for Android ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: |
+            ${{ env.APK }}
+            COCFARM-android-arm64.apk
+            COCFARM-android-x86_64.apk
+          body: |
+            ## Download
+
+            1. On your phone, download **COCFARM-android-arm64.apk** below and open it (on an x86_64 emulator such as LDPlayer or BlueStacks: **COCFARM-android-x86_64.apk**; not sure: **COCFARM-android.apk** works on both, at twice the size). Android asks to allow installing apps from your browser: allow it once.
+            2. Open COCFARM and follow its setup.
+
+            Already have COCFARM for Android? It offers this version on its home screen by itself.
+
+            > [!WARNING]
+            > Using this bot can get your Clash of Clans account banned. Only use it on an account you're willing to lose.

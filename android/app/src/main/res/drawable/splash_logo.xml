@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The logo on the launch screen. Android shows it in a circle 2/3 of the icon's width (about
+     160 dp), and the crest reaches the picture's corners (its sword handles), so it's 32% in on
+     each side: all of it inside the circle. At 18% the handles and blade tips were cut off.
+     MainActivity.SPLASH_CREST is measured for this inset. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/cocfarm_logo"
+    android:inset="32%" />

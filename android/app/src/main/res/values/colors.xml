@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- COCFARM's colours on the phone: gold on deep navy, like the logo. Running and waiting are blue
+     (cf_info), so they never look like paused (cf_warn, amber). -->
+<resources>
+    <color name="cf_background">#0B1220</color>
+    <color name="cf_surface">#121B2E</color>
+    <color name="cf_surface_high">#1A2540</color>
+    <color name="cf_surface_highest">#22304F</color>
+    <!-- 3.2:1 on the cards, 3.5:1 on the background: edges of fields and outlined buttons
+         (WCAG 1.4.11 asks 3:1). It was #2E3D5E, 1.6:1. Dividers use cf_outline_variant. -->
+    <color name="cf_outline">#566A93</color>
+    <color name="cf_outline_variant">#1C2840</color>
+    <color name="cf_text">#EAEFF8</color>
+    <color name="cf_muted">#9AA6BF</color>
+    <color name="cf_accent">#F5B83D</color>
+    <color name="cf_on_accent">#2A1B00</color>
+    <color name="cf_accent_container">#4A3510</color>
+    <color name="cf_on_accent_container">#FFE2A8</color>
+    <color name="cf_info">#6FA8FF</color>
+    <color name="cf_info_container">#16345A</color>
+    <color name="cf_good">#6CCB5F</color>
+    <color name="cf_good_container">#173A1D</color>
+    <color name="cf_warn">#E3B341</color>
+    <color name="cf_warn_container">#3D3014</color>
+    <color name="cf_bad">#FF8A95</color>
+    <color name="cf_bad_container">#4A1A1F</color>
+    <color name="cf_on_bad_container">#FFD9DC</color>
+    <color name="cf_attack">#FF9F5A</color>
+    <color name="cf_attack_container">#3D2414</color>
+    <color name="cf_gold">#F5C542</color>
+    <color name="cf_elixir">#D58CFF</color>
+    <color name="cf_dark">#B4B4E6</color>
+</resources>

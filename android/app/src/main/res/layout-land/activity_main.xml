@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- COCFARM's one screen, held sideways: where to go down the left side (with the logo), the shown page
+     beside it, so a short screen has all its height for the page. Upright: layout/activity_main.xml. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:orientation="horizontal">
+
+    <com.google.android.material.navigationrail.NavigationRailView
+        android:id="@+id/nav"
+        style="@style/Widget.COCFARM.NavRail"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        app:headerLayout="@layout/rail_header"
+        app:menu="@menu/nav" />
+
+    <View
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:background="@color/cf_outline_variant" />
+
+    <FrameLayout
+        android:id="@+id/pages"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1">
+
+        <include layout="@layout/dashboard" />
+    </FrameLayout>
+</LinearLayout>
