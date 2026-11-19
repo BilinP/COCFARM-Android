@@ -87,7 +87,8 @@ public final class TourActivity extends AppCompatActivity {
     private final Map<String, Object> chosen = new LinkedHashMap<>();
     private JSONObject fills = new JSONObject();  // what "Suggested amounts" puts in
     private String suggestedHelp = "";
-    private final Map<String, TextView> lootBoxes = new LinkedHashMap<>();
+    private final Map<String, NumberScroller> lootBoxes = new LinkedHashMap<>();
+    private JSONObject scrolls = new JSONObject();  // each amount's scroller, for the Town Hall
     private boolean filling;
     private JSONObject kept;  // the choices made before the phone turned (they win over the file's)
 
@@ -385,6 +386,8 @@ public final class TourActivity extends AppCompatActivity {
         JSONObject given = got.optJSONObject("fills");
         if (given != null) fills = given;
         suggestedHelp = got.optString("help");
+        JSONObject steps = got.optJSONObject("scrolls");
+        if (steps != null) scrolls = steps;
         if (kept != null) {
             for (java.util.Iterator<String> it = kept.keys(); it.hasNext(); ) {
                 String path = it.next();
@@ -437,30 +440,20 @@ public final class TourActivity extends AppCompatActivity {
         row.addView(suggested, beside);
         loot.addView(row);
         for (String[] kind : LOOT) {
-            TextInputLayout layout = (TextInputLayout) LayoutInflater.from(this).inflate(R.layout.field_text, loot, false);
-            layout.setHint(kind[1]);
-            layout.setPlaceholderText("e.g. 500k or 1.5m");
-            TextView edit = layout.getEditText();
-            edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            edit.setText(String.valueOf(chosen.getOrDefault(kind[0], "")));
-            edit.addTextChangedListener(new TextWatcher() {
-                public void beforeTextChanged(CharSequence s, int a, int b, int c) {
-                }
-
-                public void onTextChanged(CharSequence s, int a, int b, int c) {
-                }
-
-                public void afterTextChanged(Editable s) {
-                    if (filling) return;
-                    chosen.put(kind[0], s.toString());
-                    if (suggested.isChecked()) suggested.setChecked(false);  // typing: your own amounts
-                }
-            });
+            String path = kind[0];
+            NumberScroller layout = new NumberScroller(this, this, kind[1], false, "", "",
+                    scrolls.optJSONObject(path), chosen.getOrDefault(path, ""), value -> {
+                        if (filling) return;
+                        chosen.put(path, value);
+                        if (suggested.isChecked()) suggested.setChecked(false);  // picking: your own amounts
+                    });
+            Object snapped = layout.show(chosen.getOrDefault(path, ""));
+            if (snapped != null) chosen.put(path, snapped);
             LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            gap.topMargin = dp(8);
+            gap.topMargin = dp(10);
             loot.addView(layout, gap);
-            lootBoxes.put(kind[0], edit);
+            lootBoxes.put(path, layout);
         }
         lootError = Ui.text(this, "", com.google.android.material.R.style.TextAppearance_Material3_BodySmall, R.color.cf_bad);
         lootError.setPadding(0, dp(8), 0, 0);
@@ -477,8 +470,8 @@ public final class TourActivity extends AppCompatActivity {
                 for (Iterator<String> it = fills.keys(); it.hasNext(); ) {
                     String path = it.next();
                     chosen.put(path, fills.optString(path));
-                    TextView box = lootBoxes.get(path);
-                    if (box != null) box.setText(fills.optString(path));
+                    NumberScroller box = lootBoxes.get(path);
+                    if (box != null) box.show(fills.optString(path));
                 }
                 filling = false;
                 lootError.setVisibility(View.GONE);

@@ -20,7 +20,8 @@ import android.widget.TextView;
  */
 final class TileHead extends View {
 
-    private final String title, state;
+    private final String title;
+    private String state;
     private final TextPaint titlePaint, statePaint;
     private final int titleColor, stateColor;
     private final Paint dotPaint;
@@ -48,6 +49,18 @@ final class TileHead extends View {
         if (!this.state.isEmpty()) said.append(", ").append(this.state);
         if (dot) said.append(", changed from the defaults");
         setContentDescription(said);
+    }
+
+    /** Show another state (a number scroller's value as it moves). */
+    void setState(String now) {
+        now = now == null ? "" : now;
+        if (now.equals(state)) return;
+        state = now;
+        layout = null;
+        laidFor = -1;
+        setContentDescription(title + (state.isEmpty() ? "" : ", " + state));
+        requestLayout();
+        invalidate();
     }
 
     private int dotRoom() {

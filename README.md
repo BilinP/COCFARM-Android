@@ -36,7 +36,7 @@ after your village, in **both the home village and the builder base**. No PC nee
 **Farming**
 - ⚔️ **Farms the home village.** It finds bases with the loot you want, sends out your troops, heroes and spells, fires the heroes' abilities, and comes home.
 - 🎯 **Deploys at the red line.** Troops land just outside the red line, not out at the map's edge.
-- 🏰 **Fits your Town Hall.** The loot a base must have follows suggested amounts for your Town Hall, or type your own.
+- 🏰 **Fits your Town Hall.** The loot a base must have follows suggested amounts for your Town Hall, or pick your own on a number scroller.
 - 📦 **Knows when to stop.** Stop when your storages are full, or set a farming goal and see how far along it is on Home.
 - 🛠️ **Farms the builder base.** Both stages of builder battles, the hero's ability, the gem mine, the elixir cart and the Clock Tower's free boost.
 

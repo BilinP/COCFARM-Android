@@ -68,6 +68,8 @@ final class SettingsForm extends ContextWrapper {
     // typing in one of them: its path, the settings' boxes, and which switch each one turns off.
     private final Map<String, MaterialSwitch> switchOf = new HashMap<>();
     private final Map<String, TextView> editOf = new HashMap<>();
+    private final Map<String, NumberScroller> scrollerOf = new HashMap<>();  // a number's scroller
+    private final Map<String, Runnable> scrollBy = new HashMap<>();  // a choice -> the scroller whose steps follow it
     private final Map<String, String> turnsOff = new HashMap<>();
     private boolean filling;  // putting a switch's values in: not typing
 
@@ -219,6 +221,8 @@ final class SettingsForm extends ContextWrapper {
         dependents.clear();
         dependsOn.clear();
         boxOf.clear();
+        scrollerOf.clear();
+        scrollBy.clear();
         dividerOf.clear();
         JSONArray list = groupOf(page, index).optJSONArray("items");
         int count = list == null ? 0 : list.length();
@@ -315,6 +319,31 @@ final class SettingsForm extends ContextWrapper {
             box.addView(error);
             return box;
         }
+        JSONObject scroll = scrollFor(item);
+        if (scroll != null) {  // a number: scrolled, not typed (name left, value top right)
+            NumberScroller scroller = new NumberScroller(this, getBaseContext(), item.optString("title"), false, help,
+                    item.optString("suffix"), scroll, values.opt(path), value -> changed(path, value));
+            keep(path, scroller.show(values.opt(path)));
+            scrollerOf.put(path, scroller);
+            String by = item.optString("scroll_by");
+            if (!by.isEmpty()) {  // the goal: its steps follow the resource picked
+                JSONObject scrolls = item.optJSONObject("scrolls");
+                scrollBy.put(by, () -> {
+                    JSONObject now = scrolls == null ? null : scrolls.optJSONObject(values.optString(by));
+                    if (now != null) keep(path, scroller.setChoices(now, values.opt(path)));
+                });
+            }
+            errors.put(path, showError);
+            box.addView(scroller);
+            box.addView(error);
+            if (!path.isEmpty()) boxOf.put(path, box);
+            JSONObject depends = item.optJSONObject("depends");
+            if (depends != null) {
+                dependents.add(box);
+                dependsOn.put(box, depends);
+            }
+            return box;
+        }
         if (kind.equals("switch")) {  // the words and the switch on one line; the whole line flips it
             MaterialSwitch toggle = new MaterialSwitch(this);
             toggle.setChecked(values.optBoolean(path));
@@ -375,6 +404,39 @@ final class SettingsForm extends ContextWrapper {
                 errors.put(path, showError);
                 return presets(path, item.optJSONArray("levels"));
             case "range": {
+                JSONObject lowScroll = item.optJSONObject("scroll_low"), highScroll = item.optJSONObject("scroll_high");
+                if (lowScroll != null && highScroll != null) {  // From and To, each scrolled
+                    LinearLayout column = new LinearLayout(this);
+                    column.setOrientation(LinearLayout.VERTICAL);
+                    column.setPadding(0, dp(6), 0, 0);
+                    String suffix = item.optString("suffix");
+                    String lowPath = item.optString("low"), highPath = item.optString("high");
+                    NumberScroller[] ends = new NumberScroller[2];
+                    for (int e = 0; e < 2; e++) {
+                        boolean isLow = e == 0;
+                        String endPath = isLow ? lowPath : highPath, otherPath = isLow ? highPath : lowPath;
+                        int other = 1 - e;
+                        NumberScroller scroller = new NumberScroller(this, getBaseContext(), isLow ? "From" : "To", true,
+                                "", suffix, isLow ? lowScroll : highScroll, values.opt(endPath), value -> {
+                                    changed(endPath, value);
+                                    // From never above To: the other end moves along rather than show a mistake.
+                                    double mine = NumberScroller.number(value), theirs = NumberScroller.number(values.opt(otherPath));
+                                    if (isLow ? mine > theirs : mine < theirs) {
+                                        ends[other].show(value);
+                                        changed(otherPath, value);
+                                    }
+                                });
+                        ends[e] = scroller;
+                        keep(endPath, scroller.show(values.opt(endPath)));
+                        scrollerOf.put(endPath, scroller);
+                        errors.put(endPath, showError);
+                        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                        gap.topMargin = isLow ? 0 : dp(10);
+                        column.addView(scroller, gap);
+                    }
+                    return column;
+                }
                 LinearLayout row = new LinearLayout(this);
                 row.setGravity(Gravity.CENTER_VERTICAL);
                 TextInputLayout low = field(item.optString("low"), "number", "From", "");
@@ -833,6 +895,8 @@ final class SettingsForm extends ContextWrapper {
             }
             TextView edit = editOf.get(path);
             if (edit != null && !edit.getText().toString().equals(value)) edit.setText(value);
+            NumberScroller scroller = scrollerOf.get(path);
+            if (scroller != null) keep(path, scroller.show(value));
         }
         filling = false;
     }
@@ -856,6 +920,8 @@ final class SettingsForm extends ContextWrapper {
                 }
             }
         }
+        Runnable follow = scrollBy.get(path);
+        if (follow != null) follow.run();
         refreshDependents();
         status("Saving…", R.color.cf_muted);
         pending = true;
@@ -995,6 +1061,28 @@ final class SettingsForm extends ContextWrapper {
             out.add(new String[]{pair.optString(0), pair.optString(1)});
         }
         return out;
+    }
+
+    /** A number's scroller (Python's, for this Town Hall); the goal's for the resource picked. Null: typed. */
+    private JSONObject scrollFor(JSONObject item) {
+        String kind = item.optString("kind");
+        if (!kind.equals("number") && !kind.equals("amount")) return null;
+        JSONObject scrolls = item.optJSONObject("scrolls");
+        if (scrolls != null) {
+            JSONObject now = scrolls.optJSONObject(values.optString(item.optString("scroll_by")));
+            return now != null ? now : scrolls.optJSONObject("gold");
+        }
+        return item.optJSONObject("scroll");
+    }
+
+    /** A saved value outside its scroller's range is kept as the nearest end it shows: saved as that
+     * with the next change (opening Settings changes nothing on its own). */
+    private void keep(String path, Object snapped) {
+        if (snapped == null) return;
+        try {
+            values.put(path, snapped);
+        } catch (JSONException ignored) {
+        }
     }
 
     private TextView text(String value, int appearance, int colour) {

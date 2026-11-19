@@ -4,7 +4,7 @@ side (SettingsActivity) draws whatever this describes, so a setting is
 added here, once.
 
 Each item: {"path", "kind", "title", "help"}, plus per kind:
-  amount / number (+ "suffix") / text: a box to type in
+  amount / number (+ "suffix"): a number scroller (cocfarm_ranges); text: a box to type in
   switch: on/off;  speed: 1 (slow) to 9 (fast)
   choice: "options" {value: label};  multi: "options", several can be picked
   ordered: like multi, but the order they're picked in counts (donations)
@@ -176,7 +176,7 @@ def _storages(village: str) -> dict:
         _item(read, "switch", "Read from the game", "Once a day, the first time it's in this village, it taps your "
               "loot at the top right to see what your storages hold. Off: it keeps the amounts below."),
         *(_item(f"storage.{prefix}{kind}", "amount", f"{name} storages hold", "Filled in from the game. Wrong? "
-                "Type the right amount and turn Read from the game off, so it's kept. Empty: not known yet.")
+                "Set the right amount and turn Read from the game off, so it's kept. Not known: not read yet.")
           for kind, name in kinds.items()),
     ]}
 
@@ -198,7 +198,7 @@ PAGES = [
             _item("goal.resource", "choice", "Farm until", "Stops by itself once this run has gained the amount "
                   "below. Home shows how far it's got, and about when it'll get there.", options=GOALS),
             _item("goal.amount", "amount", "This much", "Gained this run, from attacks (and builder battles for "
-                  "gold and elixir). Accepts 15m or 800k.", depends=_depends("goal.resource", ["gold", "elixir", "dark"])),
+                  "gold and elixir).", depends=_depends("goal.resource", ["gold", "elixir", "dark"])),
         ]},
         {"title": "Alerts", "items": [
             _item(PHONE_ALERTS, "switch", "On this phone", "As the phone's own notifications. Nothing to set up."),
@@ -246,11 +246,10 @@ PAGES = [
             _item("search.maintain_only", "switch", "Only look after the village",
                   "On: it only collects, donates and looks after the village, and never attacks."),
             _item(SUGGESTED, "switch", "Suggested amounts", "From your Town Hall, and they follow it as it goes "
-                  "up. Typing your own amount turns this off.", depends=_depends("search.maintain_only", False)),
+                  "up. Picking your own amount turns this off.", depends=_depends("search.maintain_only", False)),
             _item("", "button", "Amounts for every Town Hall", "", action="suggested_table",
                   depends=_depends("search.maintain_only", False)),
-            _item("search.min_gold", "amount", "Gold", "Bases offering less gold are skipped. 0 ignores gold. "
-                  "Accepts 500k or 1.5m."),
+            _item("search.min_gold", "amount", "Gold", "Bases offering less gold are skipped. 0 ignores gold."),
             _item("search.min_elixir", "amount", "Elixir", "Bases offering less elixir are skipped. 0 ignores it."),
             _item("search.min_dark", "amount", "Dark elixir", "Bases offering less dark elixir are skipped. 0 ignores it."),
             _item("search.match_any", "switch", "Any one is enough",
@@ -366,11 +365,11 @@ PAGES = [
             _item("upgrade.order", "ordered", "What to upgrade first", ORDER_HELP, options=UPGRADE_KINDS,
                   pick_title="Tap them, first to last", depends=_depends("upgrade.enabled")),
             *(_item(f"upgrade.start_{kind}", "amount", f"Start with {name.lower()} at", "Upgrades may start "
-                    "once you have this much, before the storages are full. Empty: once full.",
+                    "once you have this much, before the storages are full. Once full: only then.",
                     depends=_depends("upgrade.enabled"))
               for kind, name in (("gold", "Gold"), ("elixir", "Elixir"), ("dark", "Dark elixir"))),
             *(_item(f"upgrade.reserve_{kind}", "amount", f"Never spend {name.lower()} below", "Upgrades only get "
-                    "what's above this amount. Empty: all of it.", depends=_depends("upgrade.enabled"))
+                    "what's above this amount. All of it: no reserve.", depends=_depends("upgrade.enabled"))
               for kind, name in (("gold", "Gold"), ("elixir", "Elixir"), ("dark", "Dark elixir"))),
             _item("upgrade.only", "ordered", "Only these buildings", "Pick buildings in order: the first gets a "
                   "builder first, and every other building is passed over. None picked: any building.",
@@ -891,7 +890,7 @@ def _special_state(title: str, group: dict, values: dict) -> tuple[str, str] | N
         return _label(group, "attack.spells", v) or "Off", "info"
     if title == "Storages":
         read = any(v.get(i["path"]) for i in group["items"] if i["kind"] == "switch")
-        return ("From game", "on") if read else ("Typed in", "info")
+        return ("From game", "on") if read else ("Set by you", "info")
     if title == "Clan":
         return _named((("clan.donate", "Donate"), ("clan.request_troops", "Request")), v)
     if title == "Ranked battles and clan wars":
@@ -1003,7 +1002,7 @@ def _suggested_help(th: int | None) -> str:
                  "gold and elixir. ")
     else:
         where = f"Town Hall {th}: {amounts['search.min_gold']} gold and {amounts['search.min_elixir']} elixir. "
-    return where + "They follow your Town Hall as it goes up. Typing your own amount turns this off."
+    return where + "They follow your Town Hall as it goes up. Picking your own amount turns this off."
 
 
 def suggested_table(folder: str) -> str:
@@ -1286,8 +1285,11 @@ def load(folder: str) -> str:
     values[PER_ACCOUNT] = config.profiles.per_account
     for p in ANDROID_ONLY:
         values[p] = _android_shown(p, _get(config, p))
-    pages = _ordered(PAGES)
+    import cocfarm_ranges
+
+    pages = json.loads(json.dumps(_ordered(PAGES)))  # its own copy: the scrollers go in
     th = town_hall(folder)
+    cocfarm_ranges.attach(pages, th)
     if values[SUGGESTED]:  # what the bot sets them to (on Windows, _fit_search_minimums)
         values.update(suggested_amounts(th))
     for item in (i for page in pages for group in page["groups"] for i in group["items"]):
@@ -1362,11 +1364,14 @@ def tour_finish(folder: str) -> None:
 def tour_values(folder: str) -> str:
     """The tour's last step, "What to farm": the village, the suggested amounts and
     the three minimums as the screen shows them, and what "Suggested" fills in."""
+    import cocfarm_ranges
+
     values = json.loads(load(folder))["values"]
     th = town_hall(folder)
     return json.dumps({"mode": values.get("bot.mode"), "suggested": values.get(SUGGESTED),
                        "amounts": {p: values.get(p) for p in MINIMUMS}, "fills": suggested_amounts(th),
-                       "help": _suggested_help(th)})
+                       "help": _suggested_help(th),
+                       "scrolls": {p: cocfarm_ranges.scroller(p, th) for p in MINIMUMS}})
 
 
 def tour_save(folder: str, given_json: str) -> str:
