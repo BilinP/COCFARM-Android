@@ -34,6 +34,7 @@ from farmbot.tasks.search import Loot
 from farmbot.game import VIEW_AREA, VIEW_NEAR, VIEW_STILL, Game, T, view_change, view_shift
 from farmbot.tasks.build_list import asks_for_gems
 from farmbot.tasks import village
+from farmbot.vision import Match
 
 log = logging.getLogger(__name__)
 
@@ -668,6 +669,24 @@ def boost_clock_tower(game: Game) -> bool:
 
 # ------------------------------------------------------------------ walls
 BB_ICON_OFFSET = (39, -65)  # cost icon relative to the builder Upgrade button's text
+# A selected builder base wall's Upgrade button: the old builder base look,
+# and the home village look the game draws there since its November 2026 update.
+BB_WALL_BUTTONS = (T.BB_UPGRADE, T.UPGRADE)
+
+
+def _wall_buttons(game: Game) -> dict[str | None, Match]:
+    """The Upgrade buttons under a selected builder base wall, by what they
+    cost ("gold", "elixir"; None: no price, like Upgrade More), in either look."""
+    from farmbot.tasks.village import _icon_offset, cost_kind
+
+    buttons = {}
+    for name in BB_WALL_BUTTONS:
+        if not game.has(name):
+            continue
+        for m in game.find_all(name):
+            offset = BB_ICON_OFFSET if name == T.BB_UPGRADE else _icon_offset(m)
+            buttons.setdefault(cost_kind(game.screen, m.x, m.y, offset), m)
+    return buttons
 
 
 def _green_button(screen: np.ndarray, region: tuple[int, int, int, int]) -> tuple[int, int] | None:
@@ -700,8 +719,8 @@ def upgrade_walls(game: Game, cfg: BuilderConfig, read_resources: Callable[[], L
     dropped and the camera put back. Returns how many walls were upgraded."""
     from farmbot.tasks.village import payable, wall_budget, walls_done
 
-    needed = (T.BUILD, T.WALL_SUGGESTION, T.BB_UPGRADE, T.BB_UPGRADE_TITLE, T.CLOSE)
-    if not cfg.walls or not all(game.has(n) for n in needed):
+    needed = (T.BUILD, T.WALL_SUGGESTION, T.BB_UPGRADE_TITLE, T.CLOSE)
+    if not cfg.walls or not all(game.has(n) for n in needed) or not any(game.has(n) for n in BB_WALL_BUTTONS):
         return 0
     game.deselect()  # a pinch finger on a wall left selected would move it
     game.zoom_out()
@@ -750,7 +769,7 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
     """One resource's walls (see ``village._upgrade_walls``). Returns how
     many walls were selected and paid for, at what price, and the
     resources left after (as paid)."""
-    from farmbot.tasks.village import (MAX_WALLS, WALL_SCREENS, cost_kind, _keep_screen, select_more,
+    from farmbot.tasks.village import (MAX_WALLS, WALL_SCREENS, _keep_screen, select_more,
                                        select_wall, wall_price, find_wall_entry, price_is_red)
 
     # The list doesn't stay open after an upgrade, as it does at home.
@@ -768,13 +787,14 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
     red = not price and price_is_red(game, entry)
     if price:
         known["price"] = price
-    if not select_wall(game, entry, T.BB_UPGRADE):
-        log.info("Builder walls: no Upgrade button under the wall (%.2f alike)", game.likeness(T.BB_UPGRADE))
+    if not select_wall(game, entry, BB_WALL_BUTTONS):
+        alike = max(game.likeness(n) for n in BB_WALL_BUTTONS)
+        log.info("Builder walls: no Upgrade button under the wall (%.2f alike)", alike)
         _keep_screen(WALL_SCREENS, game.screen)
         return 0, None, loot
     game.wait(0.6)  # the buttons fade in
     game.refresh()
-    buttons = {cost_kind(game.screen, m.x, m.y, BB_ICON_OFFSET): m for m in game.find_all(T.BB_UPGRADE)}
+    buttons = _wall_buttons(game)
     kind = next((k for k in budget if k in buttons), None)
     if kind is None:
         log.info("Builder walls: no upgrade payable with %s (buttons cost %s)", budget, list(buttons))
@@ -798,7 +818,7 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
     if count > 1:
         count = select_more(game, count)
     game.refresh()
-    buttons = {cost_kind(game.screen, m.x, m.y, BB_ICON_OFFSET): m for m in game.find_all(T.BB_UPGRADE)}
+    buttons = _wall_buttons(game)
     if kind not in buttons:
         log.info("Builder walls: the %s Upgrade button went away", kind)
         return 0, None, loot

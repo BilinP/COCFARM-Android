@@ -694,12 +694,26 @@ def _upgrade_walls(game: Game, cfg: WallsConfig, loot: Loot, budget: list[str], 
     return count, price, replace(loot, **{kind: left}), True
 
 
-def select_wall(game: Game, entry, button: str = T.UPGRADE) -> bool:
-    """Tap a "Wall x N" row: the list closes and the game selects one of
-    those walls, its Upgrade button (``button``) under it. A tap the list
-    took as the end of a glide leaves it open: the row is tapped once more."""
+def _wait_for_any(game: Game, names: str | tuple[str, ...], timeout: float):
+    """The first of ``names`` to show within ``timeout`` (one name: ``game.wait_for``)."""
+    if isinstance(names, str):
+        return game.wait_for(names, timeout=timeout)
+    names = [n for n in names if game.has(n)]
+    deadline = game.clock() + timeout
+    while True:
+        game.refresh()
+        match = next((m for n in names if (m := game.find(n)) is not None), None)
+        if match is not None or game.clock() >= deadline:
+            return match
+        game.wait(0.5, exact=True)
+
+
+def select_wall(game: Game, entry, button: str | tuple[str, ...] = T.UPGRADE) -> bool:
+    """Tap a "Wall x N" row: the game selects one of those walls, its
+    Upgrade button (``button``, or any of several looks) under it. A tap the
+    list took as the end of a glide shows no button: the row is tapped once more."""
     game.tap_match(entry)
-    if game.wait_for(button, timeout=4):
+    if _wait_for_any(game, button, timeout=4):
         return True
     rows = game.find_all(T.WALL_SUGGESTION)
     row = min(rows, key=lambda m: abs(m.y - entry.y), default=None)
@@ -707,7 +721,7 @@ def select_wall(game: Game, entry, button: str = T.UPGRADE) -> bool:
         return False  # the list closed (or moved): not some other row
     log.info("Walls: the list stayed open; tapping the wall again")
     game.tap_match(row)
-    return game.wait_for(button, timeout=4) is not None
+    return _wait_for_any(game, button, timeout=4) is not None
 
 
 def select_more(game: Game, count: int) -> int:
