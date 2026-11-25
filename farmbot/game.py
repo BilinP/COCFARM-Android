@@ -115,6 +115,7 @@ class T:
     END_BATTLE = "buttons/end_battle"  # directory: "End Battle", or "Surrender" once units are out
     SURRENDER_OK = "buttons/okay"
     SPEED = "buttons/speed_1x"  # "1x" in the last minute of a home battle: tap for 4x
+    SPEED_ON = "buttons/speed_4x"  # the same button once tapped: the battle plays at 4x (it matches "1x" closely)
     RETURN_HOME = "buttons/return_home"  # directory: "Return Home", or "Claim Reward" after a star bonus
     EVENT_CHEST = "buttons/event_chest"  # chest room shown after some battles during events
     # "Skip", bottom right of every chest room: the room's scenery changes with
@@ -180,6 +181,8 @@ class T:
     BB_BOAT_MARKER = "builder/boat_marker"  # home village, a scenery whose boat looks different: the pin above it
     BB_BATTLE = "builder/battle"  # builder base Battle (crossed axes)
     BB_FIND_NOW = "builder/find_now"
+    BB_SEARCH_CANCEL = "builder/search_cancel"
+    BB_ATTACK_COOLDOWN = "builder/attack_cooldown"
     BB_BATTLE_STARTS = "builder/battle_starts"  # "Battle starts in:" before the first troop
     BB_BATTLE_ENDS = "builder/battle_ends"  # "Battle ends in:" once it started
     BB_RETURN_HOME = "builder/return_home"  # builder battle result
@@ -221,6 +224,10 @@ class T:
     COLLECT_DARK = "collectors/dark"
     TRY_AGAIN = "buttons/try_again"
     RELOAD = "buttons/reload"
+    # "New Content: Builder needs a moment to add new game data to the village,
+    # Chief. Choose Refresh to reload the game" (after Attack!, Nov 2026): its title and its Refresh
+    NEW_CONTENT = "buttons/new_content"
+    NEW_CONTENT_REFRESH = "buttons/new_content_refresh"
     LOGIN = "buttons/login"  # the game's start screen with no account logged in: "Log in with Supercell ID"
     RATE_TITLE = "buttons/rate_title"  # Google Play's "Rate Clash of Clans" dialog, over the game
     RATE_NEVER = "buttons/rate_never"  # its NEVER: it isn't asked again
@@ -234,6 +241,11 @@ class T:
     OPEN_CHAT = "buttons/open_chat"
     CLOSE_CHAT = "buttons/close_chat"
     NO_CLAN = "buttons/no_clan"  # "Join A Clan" in the chat panel: not in a clan
+    EDIT_ARMY = "buttons/edit_army"  # battle menu, bottom left: "Edit Army" (opens the army window)
+    CASTLE_ROW = "buttons/castle_remove/castle_row"  # army window: the Clan Castle row's first icon (castle, troop)
+    CASTLE_TRASH = "buttons/castle_remove/trash"  # the bin at that row's right (only while the castle holds something)
+    CASTLE_REQUEST = "buttons/castle_remove/request"  # the army window's request button, free (a castle, a "+" bubble)
+    REMOVE_TROOPS = "buttons/castle_remove/title"  # the bin's question: "Remove troops?" (its Okay removes them)
     DONATE = "buttons/donate"
     CONFIRM = "buttons/confirm"  # "Confirm" on notices such as "The Event has ended"
     GEM = "icons/gem"  # a gem: a Confirm window showing one is never pressed
@@ -250,6 +262,10 @@ class T:
     # for only once Unable to attack is seen, since the searching screen
     # shows a faded one that would pass for a lockout.
     LOCKOUT_RETURN_HOME = "buttons/lockout_return_home"
+    # "Searching for opponents..." on the clouds: still looking for a base (the
+    # lockout has its words there instead). Offline, it stays about a minute
+    # before "Connection lost".
+    SEARCHING = "buttons/searching"
     # ...shown in the battle menu instead: the regular card's "Attack available in:" countdown
     ATTACK_COOLDOWN = "buttons/attack_cooldown"
     # The village export (tasks/export.py): profile → Settings → More Settings → Data Export
@@ -274,6 +290,21 @@ class T:
     CAPITAL_CARD_DIR = "capital/cards"  # capital/cards/<name>.png: the army editor's units, found in the troop bar too
     CAPITAL_BATTLE_HEAL = "capital/battle_heal"  # the heal spell's card in the raid's troop bar
     CAPITAL_RESULT_MAP = "capital/result_map"  # "Map" under a raid's result
+    # Clan Games (tasks/clan_games.py)
+    CG_ICON = "clan_games/icon"  # the bearded builder among the event buttons, bottom of the village
+    CG_UNFOLD = "clan_games/unfold"  # ">" after the event buttons when they're folded away
+    CG_CHOOSE = "clan_games/choose"  # "Choose" over the caravan while no challenge is going
+    CG_TITLE = "clan_games/title"  # the "Clan Games" sign, top left of the board
+    CG_CHALLENGES_TAB = "clan_games/challenges_tab"  # the board's "Challenges" tab
+    CG_REWARDS_TAB = "clan_games/rewards_tab"  # its "Rewards" tab
+    CG_MEDAL = "clan_games/medal"  # the medal after a challenge's points (in colour: it can be started)
+    CG_GOING = "clan_games/going"  # the stopwatch on the challenge that's going
+    CG_START = "clan_games/start"  # a challenge's "Start" (green; grey while another one goes)
+    CG_TRASH = "clan_games/trash"  # the started challenge's "Trash"
+    CG_TRASH_TITLE = "clan_games/trash_title"  # "Trash Challenge?" (then Okay)
+    CG_CLOSE = "clan_games/close"  # the board's red X
+    CG_NOTE = "clan_games/note"  # "Challenge Progress", on the note after a battle that helped the challenge
+    CG_INFO = "clan_games/info"  # the "i" on a reward that's an item (Rewards tab)
     WAR_BUTTON = "war/button"  # the crossed swords of the war button, left of the home village
     WAR_RETURN_HOME = "war/return_home"  # "Return Home", bottom left of the war map
     WAR_BATTLE_DAY = "war/battle_day"  # "Battle Day" under the war's timer
@@ -286,7 +317,13 @@ class T:
     WAR_CONFIRM_TITLE = "war/confirm_title"  # "Confirm Attack": "Proceeding will use one of your remaining attacks"
     WAR_CONFIRM_ATTACK = "war/confirm_attack"  # its green "Attack!"
     BAT_SPELL_CARD = "cards/bat_spell"  # the Bat Spell card's picture in the troop bar
+    EARTHQUAKE_SPELL_CARD = "cards/earthquake_spell"  # the Earthquake Spell card's
     WARDEN_CARD = "cards/grand_warden"  # the Grand Warden card's picture in the troop bar
+    QUEEN_CARD = "cards/archer_queen"  # the Archer Queen card's (her face): she walks first
+    CHAMPION_CARD = "cards/royal_champion"  # the Royal Champion card's (her face)
+    HEALER_CARD = "cards/healer"  # the Healer card's: they follow the Queen on her walk
+    INVISIBILITY_SPELL_CARD = "cards/invisibility_spell"  # the Invisibility Spell card's: hides the walker
+    ROCKET_SPEAR = "cards/rocket_spear"  # the Rocket Spear over the Royal Champion's card, once she's down
     AIR_CARDS = "cards/air"  # air troops' card pictures (one per troop): the army is an air army
     GROUND_CARDS = "cards/ground"  # ground troops' card pictures: the army is a ground army
     LURE_CARDS = "cards/lure"  # a cheap troop's card picture: one goes in first to pull out the Clan Castle
@@ -315,6 +352,11 @@ WINDOW_SIZES = (0.9, 0.95, 1.05, 1.1)  # each looked at give or take 0.03
 # (the wall's Upgrade, Upgrade More, Add Wall). When one isn't found at the
 # usual sizes these are tried too, and the size that matched is tried first
 # from then on.
+# The phone's own dialogs over the game (Connection lost: Try Again; Another
+# device: Reload Game) are drawn at its display density and font size, not
+# at the game's UI scale. Where that size is known (Game.dialog_scale), their
+# pictures are looked for at it.
+SYSTEM_DIALOGS = {T.TRY_AGAIN, T.RELOAD}
 ANY_SIZE = {T.UPGRADE, T.UPGRADE_MORE, T.ADD_WALL, T.ARMY_ATTACK, T.LOOT_CART, T.STORAGE_MAX}
 ANY_SIZES = (1.3, 1.2, 1.1, 1.4, 0.85)
 # On a screen narrower than 16:9 (860 x 672, a tablet) the army window is drawn to
@@ -345,6 +387,36 @@ ZOOM_TRIES = 2  # zoom-outs, when one leaves a building selected
 VIEW_GREY = 40
 VIEW_STILL = 0.12
 SELECTED_TOP = 0.6  # a selected building's buttons show below this share of the screen's height
+
+
+# A pinch the emulator turned into a one-finger drag (LDPlayer, once its
+# multi-touch stops working: its ctrl+scroll zoom fails then too): the map
+# moves over instead of shrinking. Told apart by how much of the view simply
+# slid over (a zoom slides nothing): further than PAN_LEAST of the screen's
+# width, and plainly a slide (phase correlation's peak, PAN_SURE: a slide
+# reads 0.5-0.85, a zoom under 0.35).
+PAN_LEAST = 0.04
+PAN_SURE = 0.42
+PAN_BACK_MS = 900  # the drag back: slow, so the map doesn't fling on past where it's let go
+
+
+def pinch_slid(before: np.ndarray, after: np.ndarray) -> tuple[int, int] | None:
+    """How far the map slid between two screens (dx, dy), if it plainly
+    slid (rather than zoomed, or hardly moved); else None."""
+    if before.shape != after.shape:
+        return None
+    h, w = before.shape[:2]
+
+    def middle(screen: np.ndarray) -> np.ndarray:
+        part = cv2.resize(screen[h // 6:h * 5 // 6, w // 6:w * 5 // 6], None, fx=0.5, fy=0.5)
+        return cv2.cvtColor(part, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    a, b = middle(before), middle(after)
+    (dx, dy), sure = cv2.phaseCorrelate(a, b, cv2.createHanningWindow(a.shape[::-1], cv2.CV_32F))
+    dx, dy = round(dx * 2), round(dy * 2)
+    if sure < PAN_SURE or math.hypot(dx, dy) < PAN_LEAST * w:
+        return None
+    return dx, dy
 
 
 def view_change(before: np.ndarray, after: np.ndarray) -> float:
@@ -423,6 +495,34 @@ def _features(image: np.ndarray):
     return keys, descriptors
 
 
+# A village zoomed out measures 0.96-1.0x the one zoomed out at load, and
+# 1.03-1.04x back from a battle (the game zooms in a little): further in
+# than ZOOMED_IN, a zoom-out didn't happen.
+ZOOMED_IN = 1.12
+
+
+def view_scale(reference: np.ndarray, screen: np.ndarray) -> float | None:
+    """How much bigger the map shows on ``screen`` than on ``reference``
+    (2.0: zoomed in twice as close), or ``None`` if they don't overlap
+    enough to tell (another base, a window over the map)."""
+    if reference.shape != screen.shape:
+        return None
+    k1, d1 = _features(reference)
+    k2, d2 = _features(screen)
+    if d1 is None or d2 is None or len(k1) < 2 or len(k2) < 2:
+        return None
+    pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(d1, d2, k=2)
+    good = [p[0] for p in pairs if len(p) == 2 and p[0].distance < VIEW_RATIO * p[1].distance]
+    if len(good) < VIEW_AGREE:
+        return None
+    src = np.float32([k1[m.queryIdx].pt for m in good])
+    dst = np.float32([k2[m.trainIdx].pt for m in good])
+    fit, inliers = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=4)
+    if fit is None or inliers is None or int(inliers.sum()) < VIEW_AGREE:
+        return None
+    return float(math.hypot(fit[0, 0], fit[1, 0]))
+
+
 def view_shift(reference: np.ndarray, screen: np.ndarray) -> tuple[int, int] | None:
     """How far the map has moved from ``reference`` to ``screen`` (what was
     at p is now at p + shift), or ``None`` if they don't overlap enough."""
@@ -439,6 +539,21 @@ def view_shift(reference: np.ndarray, screen: np.ndarray) -> tuple[int, int] | N
     if int(np.sum(np.all(np.abs(shifts - shift) <= VIEW_NEAR, axis=1))) < VIEW_AGREE:
         return None
     return round(shift[0]), round(shift[1])
+
+
+CENTRE_NEAR = 20  # px: a village view this close to the centred one is left alone
+RECENTRE_DRAGS = 2
+RECENTRE_DRAG_MS = 300
+RECENTRE_SETTLE = 0.3
+
+
+def off_centre(reference: np.ndarray, screen: np.ndarray) -> tuple[int, int] | None:
+    """How far the map on ``screen`` has moved from ``reference``, if more
+    than CENTRE_NEAR px; None if not, or if the two can't be matched."""
+    shift = view_shift(reference, screen)
+    if shift is None or max(map(abs, shift)) <= CENTRE_NEAR:
+        return None
+    return shift
 
 
 SCOUT_Y = 0.42  # the look-around drags go through the middle of the map: the base, where nothing deploys
@@ -501,6 +616,9 @@ class Game:
         # Finds on the screenshot in ``_seen_on``: (name, threshold, region) -> matches.
         self._seen_on: np.ndarray | None = None
         self._seen: dict[tuple, list[Match]] = {}
+        # Screenshot pixels per picture pixel for the phone's own dialogs (SYSTEM_DIALOGS), set where
+        # the display density is known; 0: looked for like the game's buttons.
+        self.dialog_scale = 0.0
         # The game's package, set by the bot: taps stop if another app comes in front.
         self.package = ""
         self._front_checked = -FRONT_CHECK
@@ -517,6 +635,10 @@ class Game:
         self.deploy_origins: dict[str, str] = {}  # the last battle's deploy sides: where their points came from
         self.deploy_outline: list = []  # the last battle's whole base edge, every side (see deploy_edges)
         self.last_result = None  # the last battle's stars and damage, off its result screen (see attack.read_result)
+        self.pinch_pans = False  # a zoom-out moved the map instead (see _pinch_panned): the game wants a restart
+        # The village all the way out (the bot's, from when the game loaded): a
+        # zoom-out that leaves the village well bigger than it didn't work.
+        self.zoom_reference: np.ndarray | None = None
         self.star_plan: dict = {}  # the last battle fought for stars: its plan and times (see farmbot/starlog.py)
         # This round's parts and what the habits add to them (farmbot/timings.py).
         self.ledger = Ledger(clock)
@@ -525,7 +647,7 @@ class Game:
         self.built_new = 0
         # Build list rows (resource, price) that wouldn't upgrade (no window,
         # a locked Town Hall), and until when (clock) they're passed over.
-        self.unupgradable: dict[tuple[str, int], float] = {}
+        self.unupgradable: dict[tuple, float] = {}  # (resource, price, look) -> until
 
     # -- timing ---------------------------------------------------------
     def uses(self, habit: str) -> bool:
@@ -700,6 +822,7 @@ class Game:
             self._seen_on, self._seen = screen, {}
         key = (name, threshold, region)
         if key not in self._seen:
+            self._dialog_size(screen, name)
             found = self.vision.find_all(screen, name, threshold, region)
             if not found and name in ANY_SIZE:
                 found = self._find_any_size(screen, name, threshold, region)
@@ -727,15 +850,42 @@ class Game:
                 and not (name in WINDOW_ANCHORS and not self.window_scale) and self.has(name)]
         if len(todo) < 2:
             return
+        for name, _ in todo:
+            self._dialog_size(screen, name)
         pool = find_pool()
         futures = [(name, region, pool.submit(self.vision.find_all, screen, name, None, region))
                    for name, region in todo]
         for name, region, future in futures:
             self._seen[(name, None, region)] = future.result()
 
+    def _dialog_size(self, screen: np.ndarray, name: str) -> None:
+        """A phone dialog's picture (SYSTEM_DIALOGS) is looked for at the dialog's size on this
+        screenshot: ``dialog_scale`` on the phone's screen, scaled as the screenshot is."""
+        if not self.dialog_scale or name not in SYSTEM_DIALOGS or self.raw is None:
+            return
+        size = round(self.dialog_scale * screen.shape[0] / self.raw.shape[0], 3)
+        for tname, _ in self.vision.library.get(name):
+            self.vision.scales[tname] = size
+            self.vision.fixed_scales.add(tname)
+
+    def find_any_size(self, name: str, sizes: tuple[float, ...], threshold: float | None = None,
+                      region: Rect | None = None) -> list[Match]:
+        """``name`` at a size near one of ``sizes`` (each give or take 0.03),
+        for a window drawn at a size its picture wasn't taken at. Slow (a
+        look per size): only once the window is known to be open. The size
+        found is then the picture's usual one, so the next look is quick."""
+        found = self._find_any_size(self._current(), name, threshold, region, sizes)
+        for m in found[:1]:
+            size = self._any_sizes.get(m.name)
+            if size:
+                self.vision.scales[m.name] = size
+            if self._seen_on is self.screen:  # (the miss on this screenshot, remembered, is now a find)
+                self._seen[(name, threshold, region)] = list(found)
+        return found
+
     def _find_any_size(self, screen: np.ndarray, name: str, threshold: float | None,
-                       region: Rect | None) -> list[Match]:
-        """``name`` at a size near one of ANY_SIZES (or its OWN_SIZES; the one that last
+                       region: Rect | None, sizes: tuple[float, ...] | None = None) -> list[Match]:
+        """``name`` at a size near one of ``sizes`` (None: ANY_SIZES, or its OWN_SIZES; the one that last
         matched is tried first, on its own: quick)."""
         threshold = self.vision.default_threshold if threshold is None else threshold
         for tname, image in self.vision.library.get(name):
@@ -744,7 +894,8 @@ class Game:
                 found = match_template(screen, _resized(image, last), threshold, region, tname)
                 if found:
                     return found
-            size, score = best_scale(screen, image, list(OWN_SIZES.get(name, ANY_SIZES)), region)
+            size, score = best_scale(screen, image, list(sizes if sizes is not None else OWN_SIZES.get(name, ANY_SIZES)),
+                                     region)
             if score >= threshold:
                 log.debug("%s found at %.2fx its picture's size", tname, size)
                 self._any_sizes[tname] = size
@@ -872,7 +1023,7 @@ class Game:
         back = getattr(self.device, "back", None)
         return bool(back and back())
 
-    def zoom_out(self, force: bool = False) -> bool:
+    def zoom_out(self, force: bool = False, quick: bool = False) -> bool:
         """Pinch the view all the way out, on devices that can. The game
         keeps its zoom between battles, and a zoomed-in view hides the
         map's edges where troops go. A pinch close in on a wall just
@@ -880,7 +1031,12 @@ class Game:
         moves it, so whoever left one selected drops it first): one that
         did is dropped, and the view pinched again. ``force``: pinch even
         if the view looks like the one the last zoom-out ended on (it
-        turned out not to be zoomed out after all)."""
+        turned out not to be zoomed out after all). ``quick``: a view the
+        game opens at its own default zoom (a builder battle's stage): the
+        first pinch (it goes twice) takes it all the way out, so once it
+        plainly zoomed, no third pinch checks that the view stopped moving
+        (one the game missed is still told apart, and pinched again): a
+        village back from a battle, or a builder battle's stage."""
         pinch = getattr(self.device, "zoom_out", None)
         if pinch is None:
             return False
@@ -914,18 +1070,66 @@ class Game:
                     return False
                 self.wait(0.5)
                 after = self.refresh()
+                moved = pinch_slid(before, after)
+                if moved is not None:
+                    self._pinch_panned(moved)
+                    return True
                 # The first pinch changing nothing isn't enough: a pinch the
                 # game missed (LDPlayer misses some) looks just the same as
                 # one on a view already all the way out. A second one tells.
-                if view_change(before, after) < VIEW_STILL and i:
+                change = view_change(before, after)
+                if change < VIEW_STILL and i:
                     still = True
                     break
+                if quick and i == 0 and change >= VIEW_STILL:
+                    log.debug("Zoomed out (the game's default zoom: one pinch is enough)")
+                    still = True  # all the way out: kept as the view the zoom-out ended on
+                    break
                 before = after
+            if still and i and self._pinch_ignored(after):
+                return True
             if not self.deselect():
                 if still:
                     self._zoomed_view = after
                 return True
             log.info("Zooming out selected a building: dropped it, zooming again")
+        return True
+
+    def _pinch_panned(self, moved: tuple[int, int]) -> None:
+        """The pinch moved the map over instead of zooming it: the emulator
+        let only one of its two fingers through. Drag the map back where it
+        was (else troops go down beside a base that's half off the screen),
+        and say so: pinching again would only move it further. The bot
+        restarts the game, which brings the pinch back."""
+        dx, dy = moved
+        log.warning("Zooming out moved the view %+d,%+d px instead of zooming (the emulator's two-finger pinch "
+                    "isn't getting through; on LDPlayer its ctrl+scroll zoom stops too): dragging it back", dx, dy)
+        h, w = self.screen.shape[:2]
+        x, y = w // 2, round(h * 0.45)
+        # Back by as much, in two drags if it's far (one drag stops at the screen's edge).
+        for part in (0.5, 0.5) if abs(dx) > w // 3 or abs(dy) > h // 3 else (1.0,):
+            self.swipe(x, y, x - round(dx * part), y - round(dy * part), duration_ms=PAN_BACK_MS)
+            self.wait(0.6)
+        self.pinch_pans = True
+        self._zoomed_view = None
+        self.refresh()
+
+    def _pinch_ignored(self, screen: np.ndarray) -> bool:
+        """The pinches changed nothing, yet the village is still well bigger
+        than all the way out (``zoom_reference``): the game took none of the
+        pinch (it thinks a finger is still down; its taps go unanswered too).
+        A view that doesn't change looks just like one already all the way
+        out, and was kept as such: the village stayed zoomed in from then
+        on. Said, and left to the bot's mend (as a pinch that slid)."""
+        if self.zoom_reference is None:
+            return False
+        scale = view_scale(self.zoom_reference, screen)
+        if scale is None or scale < ZOOMED_IN:
+            return False
+        log.warning("Zooming out didn't zoom: the village is still %.2fx its zoomed-out size (the game isn't "
+                    "taking the two-finger pinch)", scale)
+        self.pinch_pans = True
+        self._zoomed_view = None
         return True
 
     def _still_zoomed_out(self, screen: np.ndarray) -> bool:
@@ -1027,6 +1231,29 @@ class Game:
                 break
             self._drag_view(cx, cy, -shift[0], -shift[1])
         self.note("scout_look", 0.0, self.clock() - began)
+
+    def recentre(self, reference: np.ndarray) -> tuple[int, int] | None:
+        """Drag the map back to where it is on ``reference`` (the village as
+        the game centred it), if it has moved more than CENTRE_NEAR px. The
+        drags go through the middle of the screen. Returns how far it had
+        moved, or None if it hadn't (or the two views couldn't be matched)."""
+        w, h = self.size
+        cx, cy = w // 2, round(h * SCOUT_Y)
+        first = None
+        for _ in range(RECENTRE_DRAGS):  # one drag; a second only if the first fell short
+            shift = off_centre(reference, self.refresh())
+            if shift is None:
+                break
+            if first is None:
+                first = shift
+                log.info("The village view is %+d,%+d px off where the game put it: dragging it back", *shift)
+            dx, dy = -shift[0], -shift[1]
+            self.swipe(cx - dx // 2, cy - dy // 2, cx + dx - dx // 2, cy + dy - dy // 2, RECENTRE_DRAG_MS)
+            self.wait(RECENTRE_SETTLE, exact=True)
+        if first is not None:
+            # Still all the way out, only moved: the next zoom-out needn't pinch.
+            self._zoomed_view = self.refresh().copy()
+        return first
 
     def _drag_view(self, cx: int, cy: int, dx: int, dy: int) -> None:
         """Move the map by (dx, dy) with a drag through (cx, cy): two, when

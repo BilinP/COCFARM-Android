@@ -35,13 +35,14 @@ HOME_BUILDINGS: dict[str, tuple[str, ...]] = {
     "Defenses": ("Cannon", "Archer Tower", "Mortar", "Air Defense", "Wizard Tower", "Air Sweeper", "Hidden Tesla",
                  "Bomb Tower", "X-Bow", "Inferno Tower", "Eagle Artillery", "Scattershot", "Builder's Hut",
                  "Spell Tower", "Monolith", "Multi-Archer Tower", "Ricochet Cannon", "Firespitter",
-                 "Multi-Gear Tower", "Revenge Tower", "Super Wizard Tower"),
+                 "Multi-Gear Tower", "Revenge Tower", "Super Wizard Tower", "Spiky Tower", "Firecracker Tower"),
     "Traps": ("Bomb", "Spring Trap", "Giant Bomb", "Air Bomb", "Seeking Air Mine", "Skeleton Trap", "Tornado Trap",
               "Giga Bomb"),
     "Resources": ("Gold Mine", "Elixir Collector", "Dark Elixir Drill", "Gold Storage", "Elixir Storage",
                   "Dark Elixir Storage"),
     "Army": ("Army Camp", "Barracks", "Dark Barracks", "Laboratory", "Spell Factory", "Dark Spell Factory",
-             "Workshop", "Pet House", "Blacksmith", "Hero Hall", "Clan Castle", "Helper Hut", "Crafting Station"),
+             "Workshop", "Pet House", "Blacksmith", "Hero Hall", "Clan Castle", "Helper Hut", "Crafting Station",
+             "Squad Barracks"),
 }
 PICKABLE = tuple(name for names in HOME_BUILDINGS.values() for name in names)
 # The home village laboratory's research that can be picked (the Army
@@ -49,19 +50,20 @@ PICKABLE = tuple(name for names in HOME_BUILDINGS.values() for name in names)
 HOME_RESEARCH: dict[str, tuple[str, ...]] = {
     "Troops": ("Barbarian", "Archer", "Giant", "Goblin", "Wall Breaker", "Balloon", "Wizard", "Healer", "Dragon",
                "P.E.K.K.A", "Baby Dragon", "Miner", "Electro Dragon", "Yeti", "Dragon Rider", "Electro Titan",
-               "Root Rider", "Thrower"),
+               "Root Rider", "Thrower", "Meteor Golem"),
     "Dark troops": ("Minion", "Hog Rider", "Valkyrie", "Golem", "Witch", "Lava Hound", "Bowler", "Ice Golem",
                     "Headhunter", "Apprentice Warden", "Druid", "Furnace"),
     "Spells": ("Lightning Spell", "Healing Spell", "Rage Spell", "Jump Spell", "Freeze Spell", "Clone Spell",
                "Invisibility Spell", "Recall Spell", "Revive Spell", "Poison Spell", "Earthquake Spell",
-               "Haste Spell", "Skeleton Spell", "Bat Spell", "Overgrowth Spell", "Ice Block Spell"),
+               "Haste Spell", "Skeleton Spell", "Bat Spell", "Overgrowth Spell", "Ice Block Spell", "Totem Spell",
+               "Heroic Spell"),
     "Siege machines": ("Wall Wrecker", "Battle Blimp", "Stone Slammer", "Siege Barracks", "Log Launcher",
-                       "Flame Flinger", "Battle Drill", "Troop Launcher"),
+                       "Flame Flinger", "Battle Drill", "Troop Launcher", "Sky Wagon"),
 }
 RESEARCHABLE = tuple(name for names in HOME_RESEARCH.values() for name in names)
 # Every other name the game has for a building, trap or hero (and a few
 # newer ones): known too, so a look-alike is never taken for a picked building.
-OTHERS = ("Dragon Duke",)
+OTHERS: tuple[str, ...] = ()  # (the Dragon Duke: among the heroes now)
 KNOWN = tuple(dict.fromkeys((*PICKABLE, *gamedata.BUILDINGS.values(), *gamedata.TRAPS.values(),
                              *gamedata.HEROES.values(), *OTHERS)))
 NAMES_FROM_RIGHT = 440  # the rows' names start this far from the screen's right edge, at most
@@ -87,8 +89,35 @@ def _plain(text: str) -> str:
 RESEARCH_KNOWN = tuple(dict.fromkeys((*RESEARCHABLE, *gamedata.TROOPS.values(), *gamedata.SPELLS.values(),
                                       *gamedata.HEROES.values(), *gamedata.PETS.values())))
 _PLAIN = {name: _plain(name) for name in KNOWN}
-_PLAIN_FOR = {"buildings": _PLAIN, "research": {name: _plain(name) for name in RESEARCH_KNOWN}}
-PICKS = {"buildings": PICKABLE, "research": RESEARCHABLE}
+# The Hero Equipment tab's names (see ``farmbot/tasks/equipment.py``).
+# Newer pieces seen in the game whose export ids aren't known yet, by name
+# only (none now: Portal Pendant, seen 17 Nov 2026, has its id since).
+NEWER_EQUIPMENT: tuple[str, ...] = ()
+EQUIPMENT = tuple(dict.fromkeys((*gamedata.EQUIPMENT.values(), *NEWER_EQUIPMENT)))
+# The picker's groups, by hero, as the Hero Equipment tab shows them (seen on
+# 17 Nov 2026; every hero's pieces by the wiki, 18 Nov 2026): the
+# Common pieces, then the Epic ones. A piece under no hero goes under "Other"
+# (a tab only when there is one).
+_BY_HERO = {
+    "Barbarian King": ("Barbarian Puppet", "Rage Vial", "Earthquake Boots", "Vampstache", "Giant Gauntlet",
+                       "Spiky Ball", "Snake Bracelet", "Stick Horse"),
+    "Archer Queen": ("Archer Puppet", "Invisibility Vial", "Giant Arrow", "Healer Puppet", "Frozen Arrow",
+                     "Magic Mirror", "Action Figure", "Monolith Arrow"),
+    "Grand Warden": ("Eternal Tome", "Life Gem", "Rage Gem", "Healing Tome", "Fireball", "Lavaloon Puppet",
+                     "Heroic Torch"),
+    "Royal Champion": ("Royal Gem", "Seeking Shield", "Haste Vial", "Hog Rider Puppet", "Rocket Spear",
+                       "Electro Boots", "Frost Flake"),
+    "Minion Prince": ("Henchmen Puppet", "Dark Orb", "Metal Pants", "Noble Iron", "Dark Crown", "Meteor Staff",
+                      "Portal Pendant"),
+    "Dragon Duke": ("Fire Heart", "Flame Blower", "Stun Blaster", "Electro Fangs", "Rocket Backpack",
+                    "Revenge Deck"),
+}
+_GROUPED = {name for names in _BY_HERO.values() for name in names}
+_UNGROUPED = tuple(n for n in EQUIPMENT if n not in _GROUPED)
+HOME_EQUIPMENT: dict[str, tuple[str, ...]] = {**_BY_HERO, **({"Other": _UNGROUPED} if _UNGROUPED else {})}
+_PLAIN_FOR = {"buildings": _PLAIN, "research": {name: _plain(name) for name in RESEARCH_KNOWN},
+              "equipment": {name: _plain(name) for name in EQUIPMENT}}
+PICKS = {"buildings": PICKABLE, "research": RESEARCHABLE, "equipment": EQUIPMENT}
 
 
 def building(text: str, which: str = "buildings") -> str | None:

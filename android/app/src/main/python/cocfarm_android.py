@@ -22,12 +22,15 @@ from farmbot import __version__, accounts, catalog, history, redact
 from farmbot.bot import Bot
 from farmbot.geometry import Rect
 from farmbot.config import load_config
+from farmbot import friendly
+from farmbot.device import REFOCUS_AWAY, GameNotInstalled
 from farmbot.friendly import describe_status, explain
-from farmbot.game import REFERENCE_HEIGHT, Game, Stopped
+from farmbot.game import REFERENCE_HEIGHT, Game, GameNotInFront, Stopped
 from farmbot.vision import TemplateLibrary, Vision
 
 from farmbot.notify import Notifier
 
+from cocfarm_screen import Letterbox
 from cocfarm_settings import ensure_settings, load_settings, phone_alert
 
 Bridge = jclass("com.cocfarm.app.Bridge")
@@ -37,6 +40,10 @@ _pause = threading.Event()  # set: wait at the next safe point (the floating but
 _guard = {"held": "", "paused": False}  # the battery guard: why it's holding back, and whether it paused
 GUARD_EVERY = 30  # seconds between looks at the battery
 RESUME_MARGIN = 5  # % battery, or °C: how far back it must come before farming carries on
+LOCK_LOOK = 1.0  # seconds between looks at a locked screen
+UNLOCK_SETTLE = 1.0  # seconds for the game to come back to life once unlocked
+HOME_GRACE = 15.0  # seconds the home screen may be in front before the game is taken to have crashed or closed
+WAIT_GIVE_UP = 30 * 60  # seconds a wait for the player (a locked screen, another app in front) lasts before the bot stops
 running_config = None  # the farming bot's settings: the settings screen changes them as it saves
 # The UI scale measured on each screen size. It is measured from the village's
 # buttons, so a run that starts mid-battle or on the results screen needs it.
@@ -91,6 +98,18 @@ class AndroidDevice:
         self.package = package
         self.clipboard = PhoneClipboard()
         self.played = False  # the game has been opened this run (until then, COCFARM's screen is where Start was pressed)
+        self.letterbox = Letterbox()  # black bars round the game (a foldable, a tablet)
+        self._gave_up = False  # a wait on the player ran out (_hold)
+        self.game_size: tuple[int, int] | None = None  # the game's part of the screen, once a screenshot showed it
+        self.on_bars = None  # called with the game's (width, height) when the bars round it change
+        # The phone's language, for farmbot.language's "the game may not be in English" (read over
+        # an emulator's shell on Windows): Clash of Clans starts in it.
+        self._android_language = _phone_language()
+
+    def _on_screen(self, x, y) -> tuple[int, int]:
+        """A point on the game, where it is on the phone's screen (past any bars)."""
+        dx, dy = self.letterbox.offset
+        return int(x) + dx, int(y) + dy
 
     def _in_game(self) -> None:
         """Touch only the game. While another app is in front (COCFARM's own
@@ -99,30 +118,73 @@ class AndroidDevice:
             return str(Bridge.foregroundPackage()) not in ("", self.package)
 
         if not elsewhere():
+            self._gave_up = False
             return
         log.info("Clash of Clans isn't in front: waiting for it before tapping")
         _status("Waiting for Clash of Clans to be in front")
-        while elsewhere():
-            if _stop.is_set():
-                raise Stopped
-            time.sleep(0.5)
+
+        home = _home_package()
+        since = time.monotonic()
+
+        def still_away() -> bool:
+            if self._wait_unlocked():
+                _status("Waiting for Clash of Clans to be in front")
+                since_reset()
+            front = str(Bridge.foregroundPackage())
+            if front not in ("", self.package) and front == home and time.monotonic() - since >= HOME_GRACE:
+                # The home screen, with no app in use: the game crashed or closed (a player who
+                # went to use another app has that app in front). The bot starts it again.
+                raise GameNotInFront(f"the home screen ({front}) is in front instead of the game "
+                                     "(it crashed or closed); not tapping")
+            return elsewhere()
+
+        def since_reset() -> None:
+            nonlocal since
+            since = time.monotonic()
+
+        self._hold(still_away, 0.5, "Clash of Clans stayed in the background")
         log.info("Clash of Clans is back: carrying on")
         _status("Resuming")
 
+    def _wait_unlocked(self) -> bool:
+        """While the screen is off or locked, wait (saying why: taps can't reach a
+        locked screen, and a screenshot of it shows no game). True if it waited."""
+        if not _screen_locked():
+            return False
+        log.info("The screen is off or locked: waiting for it to be unlocked")
+        _status("Screen locked: unlock the phone to carry on")
+        self._hold(_screen_locked, LOCK_LOOK, "The phone's screen stayed locked")
+        log.info("The screen is unlocked: carrying on")
+        _status("Resuming")
+        time.sleep(UNLOCK_SETTLE)  # (the game comes back to life)
+        return True
+
+    def _hold(self, busy, look: float, gave_up: str) -> None:
+        """Wait while ``busy()``, looking every ``look`` seconds: these waits are on
+        the player, so after WAIT_GIVE_UP the bot stops and says so (PlayerAway,
+        which the bot never retries). Once one wait has given up, the next gives up at once."""
+        give_up = time.monotonic() + (0 if self._gave_up else WAIT_GIVE_UP)
+        while busy():
+            if _stop.is_set():
+                raise Stopped
+            if time.monotonic() >= give_up:
+                self._gave_up = True
+                raise PlayerAway("%s for %d minutes: stopped" % (gave_up, WAIT_GIVE_UP // 60))
+            time.sleep(look)
+        self._gave_up = False
+
     def screenshot(self) -> np.ndarray:
+        self._wait_unlocked()
         if self.played and str(Bridge.foregroundPackage()) == OWN_PACKAGE:
             # The player opened COCFARM mid-round: looking at its screen would fail the
             # round (a search's wait for Next runs out). Wait, then bring the game back.
             log.info("COCFARM's screen is open: waiting for it to close")
             _status("Waiting while COCFARM's screen is open")
             away = time.monotonic()
-            while str(Bridge.foregroundPackage()) == OWN_PACKAGE:
-                if _stop.is_set():
-                    raise Stopped
-                time.sleep(0.5)
+            self._hold(lambda: str(Bridge.foregroundPackage()) == OWN_PACKAGE, 0.5, "COCFARM's own screen stayed open")
             if str(Bridge.foregroundPackage()) not in ("", self.package):
                 log.info("Bringing Clash of Clans back")
-                Bridge.startApp(self.package)
+                self.start_app(self.package)
                 # Back within seconds it picks up where it was; after longer it loads again (~15 s).
                 time.sleep(3 if time.monotonic() - away < 10 else 20)
             _status("Resuming")
@@ -130,12 +192,27 @@ class AndroidDevice:
         rows = np.frombuffer(bytes(frame.data), np.uint8).reshape(frame.height, frame.rowStride)
         rgba = rows[:, :frame.width * 4].reshape(frame.height, frame.width, 4)
         image = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+        if self.letterbox.update(image):
+            left, top, right, bottom = self.letterbox.box
+            h, w = image.shape[:2]
+            if any(self.letterbox.box):
+                log.info("The game shows in %dx%d of the %dx%d screen (black bars: left %d, top %d, right %d, "
+                         "bottom %d): looking at the game alone", w - left - right, h - top - bottom, w, h,
+                         left, top, right, bottom)
+            else:
+                log.info("The game fills the screen again (%dx%d)", w, h)
+            self.game_size = (w - left - right, h - top - bottom)
+            if self.on_bars is not None:
+                self.on_bars(*self.game_size)  # (its buttons' size to the height changed: the UI scale too)
+        elif self.game_size is None:
+            self.game_size = (image.shape[1], image.shape[0])
+        image = self.letterbox.game(image)
         _seen[:] = [image, time.time()]  # (a new array each time: nothing to copy)
         return image
 
     def tap(self, x: int, y: int) -> None:
         self._in_game()
-        Bridge.tap(int(x), int(y))
+        Bridge.tap(*self._on_screen(x, y))
 
     def tap_many(self, points: list[tuple[int, int]], pause: float | list[float] = 0.0) -> None:
         self._in_game()
@@ -147,20 +224,22 @@ class AndroidDevice:
                 if _stop.is_set():
                     raise Stopped
                 self._in_game()
-                Bridge.tapMany(jarray(jint)([int(x)]), jarray(jint)([int(y)]), 0)
+                sx, sy = self._on_screen(x, y)
+                Bridge.tapMany(jarray(jint)([sx]), jarray(jint)([sy]), 0)
                 if gap:
                     time.sleep(gap)
             return
         if points:
-            xs = jarray(jint)([int(x) for x, _ in points])
-            ys = jarray(jint)([int(y) for _, y in points])
+            moved = [self._on_screen(x, y) for x, y in points]
+            xs = jarray(jint)([x for x, _ in moved])
+            ys = jarray(jint)([y for _, y in moved])
             Bridge.tapMany(xs, ys, int(pause * 1000))
 
     def press(self, x: int, y: int, hold_ms: int) -> None:
         """A finger held on (x, y) for ``hold_ms`` ("Each tap held a moment", and
         "Hold to deploy", where the troop streams out under it)."""
         self._in_game()
-        Bridge.press(int(x), int(y), int(hold_ms))
+        Bridge.press(*self._on_screen(x, y), int(hold_ms))
 
     def drag(self, points: list[tuple[int, int]], duration_ms: int) -> bool:
         """One finger down on the first point, through the others, and up on the
@@ -169,17 +248,18 @@ class AndroidDevice:
         self._in_game()
         if len(points) < 2:
             return False
-        xs = jarray(jint)([int(x) for x, _ in points])
-        ys = jarray(jint)([int(y) for _, y in points])
+        moved = [self._on_screen(x, y) for x, y in points]
+        xs = jarray(jint)([x for x, _ in moved])
+        ys = jarray(jint)([y for _, y in moved])
         return bool(Bridge.drag(xs, ys, int(duration_ms)))
 
     def zoom_out(self, times: int = 2) -> bool:
         self._in_game()
-        return all(Bridge.pinch() for _ in range(times))
+        return all(Bridge.pinch(*self.letterbox.box) for _ in range(times))  # (on the game, not on a bar)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
         self._in_game()
-        Bridge.swipe(int(x1), int(y1), int(x2), int(y2), int(duration_ms))
+        Bridge.swipe(*self._on_screen(x1, y1), *self._on_screen(x2, y2), int(duration_ms))
 
     def back(self) -> bool:
         self._in_game()
@@ -189,8 +269,23 @@ class AndroidDevice:
         raise NotImplementedError("typing isn't needed on Android")
 
     def start_app(self, package: str) -> None:
-        Bridge.startApp(package)
+        try:
+            Bridge.startApp(package)
+        except Exception as exc:  # (a Java IllegalStateException)
+            if "isn't installed" in str(exc):
+                raise GameMissing(package) from exc  # uninstalled mid-run, say: restarting won't help
+            raise
         self.played = True
+
+    def refocus_app(self, package: str) -> bool:
+        """The game to the background (home) and straight back, without closing it:
+        it drops a touch it thought was still held, after which pinches only drag the
+        map (farmbot.device.AdbDevice.refocus_app, the same on a phone)."""
+        if not Bridge.home():
+            return False
+        time.sleep(REFOCUS_AWAY)
+        self.start_app(package)
+        return True
 
     def game_shown(self) -> None:
         """The screenshots show the game (after start_app): it's in front."""
@@ -209,10 +304,7 @@ class AndroidDevice:
         if app == OWN_PACKAGE and self.played:  # the player is looking at COCFARM: no reason to open the game over it
             log.info("COCFARM's screen is open: waiting for it to close")
             _status("Waiting while COCFARM's screen is open")
-            while str(Bridge.foregroundPackage()) == OWN_PACKAGE:
-                if _stop.is_set():
-                    raise Stopped
-                time.sleep(0.5)
+            self._hold(lambda: str(Bridge.foregroundPackage()) == OWN_PACKAGE, 0.5, "COCFARM's own screen stayed open")
             app = str(Bridge.foregroundPackage())
             _status("Resuming")
         return app
@@ -259,6 +351,40 @@ def _scales(folder: str) -> dict[str, float]:
         return {}
 
 
+def _home_package() -> str:
+    try:
+        return str(Bridge.homePackage())
+    except Exception:  # (an older app's Bridge, or no telling)
+        return ""
+
+
+# Screen pixels per sp the Try Again and Reload Game pictures were taken at. Measured: the
+# "Connection lost" dialog matched them at 1.46x at density 480 and 0.98x at 320 (font size 1).
+DIALOG_PICTURE_SP = 2.06
+
+
+def _dialog_scale() -> float:
+    """The phone's own dialogs' size on its screen, to their pictures' (0: no telling)."""
+    try:
+        return round(float(Bridge.textPixels()) / DIALOG_PICTURE_SP, 3)
+    except Exception:  # (an older app's Bridge, or the capture not running)
+        return 0.0
+
+
+def _scale_for(game: Game, folder: str, size: str) -> None:
+    """The game's part of the screen changed size (black bars came or went):
+    the UI scale remembered for that size, or measured again (0: unknown)."""
+    scale = _scales(folder).get(size, 0.0)
+    if scale == game.ui_scale:
+        return
+    log.info("UI scale for the game at %s: %s", size, "%.2f (remembered)" % scale if scale else "to be measured")
+    game.ui_scale = scale
+    game.vision.scales.clear()  # (sizes found before were relative to the old scale)
+    game.vision.scales.update(game.picture_scales)
+    game._calibration_tried.clear()
+    game._seen_on = None
+
+
 def _remember_scale(folder: str, size: str, scale: float) -> None:
     scales = _scales(folder)
     if scales.get(size) != scale:
@@ -272,6 +398,94 @@ def _new_session() -> None:
     _session.update(started=time.time(), state="running", headline="Starting", detail="", bases=0, attacks=0,
                     gained=[0, 0, 0], base=None, attack=None, problem=None,
                     builder={"battles": 0, "second": 0, "gold": 0, "elixir": 0, "last": None})
+
+
+def _phone_language() -> str | None:
+    try:
+        return str(jclass("java.util.Locale").getDefault().toLanguageTag()) or None
+    except Exception:  # not known: no warning
+        return None
+
+
+def _screen_locked() -> bool:
+    try:
+        return bool(Bridge.screenLocked())
+    except Exception:  # an older app without it, or no service yet
+        return False
+
+
+# What each self-check value means when it's a problem: (bad value, level, what to do).
+class PlayerAway(GameNotInstalled):
+    """A wait on the player ran out (the screen stayed locked, another app stayed
+    in front). Like a missing game, restarting it won't help: the bot stops and
+    says why (a GameNotInstalled, as GameNeedsUpdate is, so the bot stops on it)."""
+
+    def __init__(self, message: str):
+        RuntimeError.__init__(self, message)
+
+
+class GameMissing(GameNotInstalled):
+    """Clash of Clans isn't on the phone: the bot stops at once and says so."""
+
+    def __init__(self, package: str):
+        RuntimeError.__init__(self, f"Clash of Clans ({package}) isn't installed on this phone. "
+                              "Install it from the Play Store and sign in, then press Start")
+
+
+# What the phone's own waits stop with, in plain words (the shared rules are for an emulator).
+PHONE_RULES = [
+    (r"isn't installed on this phone",
+     "Clash of Clans isn't on this phone",
+     "COCFARM plays the game you have installed, and it isn't there (or the settings name another app). Install "
+     "Clash of Clans from the Play Store and sign in, then press Start.", "retry", "Try again"),
+    (r"screen stayed locked",
+     "The phone stayed locked",
+     "COCFARM can't see or touch the game on a locked screen, so after a long wait it stopped. Keep the screen "
+     "on while it farms (the phone's screen timeout, or a charger with \"stay awake\").", "retry", "Try again"),
+    (r"Clash of Clans stayed in the background",
+     "Another app stayed in front of the game",
+     "COCFARM only taps the game, so it waited for Clash of Clans to come back, then stopped. Open the game "
+     "and press Start.", "retry", "Try again"),
+    (r"COCFARM's own screen stayed open",
+     "COCFARM's screen stayed open",
+     "The bot waits while you look at COCFARM, so it doesn't play under you. It waited a long time, then "
+     "stopped. Press Start, then go back to the game.", "retry", "Try again"),
+]
+friendly.RULES[:0] = [rule for rule in PHONE_RULES if rule not in friendly.RULES]
+
+
+SELF_CHECK_WARNINGS = {
+    "accessibility": ("off", logging.ERROR, "COCFARM's accessibility service is off: turn it on in Android's "
+                      "Settings → Accessibility, or no tap reaches the game"),
+    "capture": ("off", logging.ERROR, "screen capture isn't running: press Start again and allow it"),
+    "battery_optimised": ("yes", logging.WARNING, "Android may stop COCFARM in the background: set its battery use "
+                          "to Unrestricted (Settings → Apps → COCFARM → Battery)"),
+    "notifications": ("off", logging.WARNING, "notifications are off for COCFARM: alerts and the running notice "
+                      "won't show"),
+    "locked": ("yes", logging.WARNING, "the screen is locked: COCFARM waits until it's unlocked"),
+    "game": ("missing", logging.ERROR, "Clash of Clans isn't installed"),
+}
+
+
+def self_check(package: str) -> dict[str, str]:
+    """Checks the phone once at the start and logs it: the Android version, the screen, the
+    services the bot needs and the game. Anything wrong is logged as a warning with what to do."""
+    try:
+        text = str(Bridge.selfCheck(package))
+    except Exception as exc:  # never stop a run over the check itself
+        log.warning("Self-check couldn't run: %s", exc)
+        return {}
+    found = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    log.info("Self-check: %s", ", ".join(f"{k} {v}" for k, v in found.items()))
+    for key, (bad, level, advice) in SELF_CHECK_WARNINGS.items():
+        if found.get(key) == bad:
+            log.log(level, "Self-check: %s", advice)
+    try:
+        if float(found.get("font_scale", "1")) > 1.3:
+            log.info("Self-check: a large font size is set; the game's own text is unaffected")
+    except ValueError:
+        pass
+    return found
 
 
 def _status(text: str) -> None:
@@ -442,6 +656,7 @@ def run(folder: str) -> None:
     log.info("COCFARM %s on Android", __version__)
     path = ensure_settings(folder)
     cfg = load_settings(folder)
+    self_check(cfg.device.package)
     cfg.home = Path(folder)  # the village export and what's upgradable are kept here, as beside a Windows profile
     library = TemplateLibrary(cfg.bot.templates)
     missing = [] if cfg.search.maintain_only else catalog.missing(library, required_only=True)
@@ -457,6 +672,9 @@ def run(folder: str) -> None:
     game = Game(device, Vision(library, cfg.bot.threshold), stop_event=_stop,
                 ui_scale=cfg.device.ui_scale or _scales(folder).get(size, 0.0),
                 window_scale=cfg.device.window_scale, picture_scales=cfg.device.picture_scales)
+    game.dialog_scale = _dialog_scale()
+    if not cfg.device.ui_scale:
+        device.on_bars = lambda width, height: _scale_for(game, folder, "%dx%d" % (width, height))
     done = threading.Event()
     threading.Thread(target=_watch_power, args=(cfg, done), name="battery", daemon=True).start()
     try:
@@ -478,7 +696,8 @@ def run(folder: str) -> None:
         running_config = None
         _session["ended"] = time.time()
         if not cfg.device.ui_scale and game.ui_scale:
-            _remember_scale(folder, size, game.ui_scale)
+            # Under the game's own size: letterboxed, its buttons are another share of the height.
+            _remember_scale(folder, "%dx%d" % device.game_size if device.game_size else size, game.ui_scale)
     if _session.get("goal_reached"):
         _session.update(state="stopped", headline="Goal reached", detail="It stopped by itself.")
         Bridge.status("Goal reached")
@@ -591,13 +810,16 @@ def _watch_power(cfg, done: threading.Event) -> None:
         done.wait(GUARD_EVERY)
 
 
-def toggle_pause() -> bool:
-    """Pause at the next safe point (never mid-battle), or carry on. True if now paused."""
+def toggle_pause(by: str = "") -> bool:
+    """Pause at the next safe point (never mid-battle), or carry on. True if now paused.
+    ``by``: what was pressed (the floating button, the notification, Home), for the log."""
     _guard["paused"] = False  # the player's call now, until the battery's reason changes
     if _pause.is_set():
         _pause.clear()
+        log.info("Carry on pressed%s", f" ({by})" if by else "")
     else:
         _pause.set()
+        log.info("Pause pressed%s: pausing after what it's doing now", f" ({by})" if by else "")
         Bridge.status("Pausing after what it's doing now…")
     return _pause.is_set()
 

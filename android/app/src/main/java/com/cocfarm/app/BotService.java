@@ -76,7 +76,7 @@ public class BotService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_PAUSE.equals(intent.getAction())) {
-            Bridge.togglePause();
+            Bridge.togglePause("the notification");
             return START_NOT_STICKY;
         }
         if (intent == null || ACTION_STOP.equals(intent.getAction())) {

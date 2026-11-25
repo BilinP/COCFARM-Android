@@ -18,6 +18,110 @@ from farmbot.update import STATE, _load, _save, parse_version
 KINDS = ["New", "Improved", "Fixed"]
 
 NOTES: dict[str, list[tuple[str, str, str]]] = {
+    "1.9.5": [
+        ("New", "League bonus farming",
+         "Turn it on under Attacking → Ending the battle: every base is attacked, the whole army goes down at once "
+         "round the base (troops on every side, spells such as Totems spread round it before the heroes), and the "
+         "battle is left as soon as the Overall Damage reaches 70% (or what you set), where the league bonus is paid "
+         "in full. Most battles take well under a minute."),
+        ("Fixed", "Barch squads",
+         "The Barch squad's green card is now seen in the troop bar, so armies built on it are deployed."),
+        ("Fixed", "Every Earthquake goes down",
+         "Earthquakes went down so fast on one spot that the game sometimes took only 2 or 3 of the 4. They're now "
+         "a moment apart, and the card's count is checked after each spot: any that didn't go down are cast there "
+         "again."),
+        ("Improved", "Earthquakes not piled up",
+         "Earthquakes left over after 4 on each spot get a spot of their own when there are 2 or more (11: 4, 4 "
+         "and 3), instead of all going on the last spot."),
+        ("Improved", "Heroes ahead of the army behind Earthquakes",
+         "With Earthquakes on the way in, the heroes and siege machine now go down first and clear the outside "
+         "there; the troops follow a few seconds later and go on in through the open walls."),
+        ("Improved", "4x sooner",
+         "The 1x button is pressed once the whole army is down (troops, spells, heroes and siege), whenever it "
+         "shows: straight away during events that show it from the battle's start, in the last minute otherwise."),
+        ("Fixed", "A zoom-out that slides the view",
+         "When the emulator stops passing two-finger zooms (LDPlayer, when its ctrl+scroll zoom stops too), zooming "
+         "out slid the view over, and in a battle the game then took no taps at all. The view is now put back and "
+         "the game is sent to the background and back (about 10 seconds), which brings zooming back; in a battle "
+         "this happens before anything is deployed, on the same base. The game is reopened only if that fails."),
+        ("Fixed", "The village left off to one side after a battle",
+         "Since the game's latest update, the village no longer comes back centred after a battle, so collecting, "
+         "upgrades and the next battles went to one side. Before any village job, the village is now dragged back "
+         "to where the game showed it when it loaded. The village is only zoomed out and centred when a job needs "
+         "it (collecting, the loot cart, gravestones, the builder base), so most rounds go straight to the next "
+         "battle."),
+        ("Improved", "Spells closer to the base's middle",
+         "In league bonus farming, spells such as Totems now go round the base a little in from its edge, among "
+         "the buildings, instead of out where the troops are dropped."),
+        ("Fixed", "Clan chat opened while collecting",
+         "A resource bubble right next to the clan chat button could open the chat instead. Bubbles beside the "
+         "screen's buttons are now skipped."),
+        ("Fixed", "A lost connection no longer restarts the game",
+         "When the game loses its connection in a battle or while looking for a base, its Try Again is tapped and "
+         "farming carries on. A search that hangs on \"Searching for opponents...\" is no longer taken for the "
+         "\"Unable to attack\" lockout, which closed the game for minutes."),
+        ("Improved", "Tablets",
+         "Account names, the profile window and the floating button work at tablet sizes. The floating button "
+         "snaps to the nearer side edge when dropped and keeps its spot when the screen turns."),
+        ("Improved", "Phones with black bars round the game",
+         "A game shown with black bars (letterboxed) is played inside them, and zooming out works there."),
+        ("Improved", "Checks before it starts",
+         "COCFARM checks the phone at the start: a locked screen is waited out, a missing Clash of Clans stops it "
+         "at once with a clear message, and Home shows a step to let it run in the background."),
+    ],
+    "1.9.3": [
+        ("Fixed", "Troops round bases on busy sceneries",
+         "On sceneries busy right round the map (sweets, a temple, city blocks, factories, a harbour) and on "
+         "jungles thick with decorations, troops now go round the base itself instead of to the screen's corners."),
+        ("Fixed", "An Attack! tap that doesn't take",
+         "When the army window after Find a Match stays up after Attack!, COCFARM taps it again instead of "
+         "waiting and restarting the game."),
+        ("Fixed", "The New Content window",
+         "When the game updates while running, its New Content window is refreshed and the search starts again, "
+         "instead of waiting on it and restarting the game."),
+        ("Improved", "Keep attacking with full storages",
+         "\"End battle when storages are full\" is now first under Attacking → Ending the battle and says how "
+         "to turn it off; the log says so too when it ends a battle."),
+        ("New", "Pause when there's nothing left to upgrade",
+         "When every builder is busy and nothing can be started, COCFARM closes the game and waits until the "
+         "first upgrade is done, then carries on. It works without the Windows wake-up too."),
+        ("New", "Hero equipment upgrades",
+         "Equipment can go in the upgrade order: pick the pieces in the order you want them, or leave it to the "
+         "Blacksmith's list. Pieces you're short of ore for, or that need a higher Blacksmith, are skipped."),
+        ("Fixed", "Random and spread spells go where they say",
+         "Random spells land on a new spot inside the base each battle, and spread spells go evenly round its "
+         "centre instead of in a line on one side."),
+        ("New", "Queen and Champion walks",
+         "Pick a hero walk under heroes: the Archer Queen (her Healers behind her) or the Royal Champion goes in "
+         "alone first and walks round the base, clearing what she can; the army follows her in from her side once "
+         "she falls. Once she's hurt, Invisibility Spells keep her hidden one after another, each where she is "
+         "(by the bar over her head). "
+         "A Champion with the Spirit Fox hides by herself."),
+        ("New", "Earthquake Spells",
+         "Pick \"Bats + quakes\" under spells: Earthquakes go first, four at a time (or as many as you set) on "
+         "the walls where the army goes in, the outer walls then the core's, and the army goes in behind them "
+         "from that side. Good with Valkyries. \"Earthquakes go: Middle\" casts them after the troops instead. "
+         "\"Funnel first\" (off unless you pick it): two troops (or the heroes, all but the Warden) clear each side of the way in "
+         "first, so the army walks straight in."),
+        ("Fixed", "Troops on city, stone and snow sceneries",
+         "Where there's no grass, golden walls were taken for the red line and troops refused. The base is now "
+         "found by its buildings, whatever colour the ground is."),
+        ("Fixed", "Troops on the skull jungle",
+         "The forest's shade hid the red line along the top of the skull jungle, so troops went to fixed lines "
+         "there. The line is now used where the ground along it is plain."),
+        ("Fixed", "Donating to a request others fill",
+         "When other clan members fill a request while COCFARM is donating, the game turns its next donation "
+         "down. COCFARM now sees that and moves on to the next request, instead of tapping on and crashing the game."),
+        ("Fixed", "Siege machine donations",
+         "The donate window is scrolled now, so the troops further along and the siege machines at the end of "
+         "the row are found. The siege you picked is donated."),
+        ("Improved", "Faster donations, every request",
+         "Shorter gaps between donations, and every request in the chat is filled before it closes, those that "
+         "come in meanwhile too."),
+        ("Fixed", "Clan Castle requests on time",
+         "The timer on the Request button is read right now (\"59s\" and \"3m\" were misread), a request that's "
+         "nearly free is waited for in the chat, and donations failing no longer hold requests up."),
+    ],
     "1.9.2": [
         ("New", "Snacks and potions are used for you",
          "Turn on \"Use snacks and potions\" and, when the box left of Build shows a number, COCFARM uses every "

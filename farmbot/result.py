@@ -107,3 +107,48 @@ def read(screen: np.ndarray, font: text.Font | None) -> Result | None:
     if earned is None:
         return None
     return Result(earned, damage(screen, font) if font is not None else None)
+
+
+# During a battle, bottom right over the troop bar: "Overall Damage" and,
+# under it, the stars so far and the damage ("25%"): white digits with a dark
+# outline, right-aligned. On a screen STANDARD_WIDTH (860) wide, 672 high:
+# the box this looks in, from the right and from the bottom (a taller screen
+# keeps the bar and the box at its bottom).
+OVERALL_BOX = (110, 146, 108, 34)  # x from the right, y from the bottom, width, height (under the label)
+OVERALL_HEIGHT = (11, 24)  # px a digit is tall (at 860 wide): shorter or taller is something else
+OVERALL_SURE = 0.6  # each digit's least match
+# The words "Overall Damage" over it: small white letters, many in a row (the
+# scouting screen's Next button has its cost there instead, "50", which read
+# as 5%). x from the right, y from the bottom, width, height; letters at least.
+OVERALL_LABEL = (110, 166, 108, 22)
+OVERALL_LETTERS = 7
+
+
+def overall_damage(screen: np.ndarray, font: text.Font, ui_scale: float = 0.0) -> int | None:
+    """The Overall Damage % during a battle, or None if it can't be read.
+    The number is the last run of digits left of the "%" sign, the right
+    end of the box. ``ui_scale``: the game's measured one (Game.ui_scale).
+    The game's buttons go with the screen's height times it, not with its
+    width: a wide phone's screen is far wider than a PC's for the same buttons."""
+    s = screen.shape[0] * ui_scale / STANDARD_HEIGHT if ui_scale else screen.shape[1] / STANDARD_WIDTH
+    h, w = screen.shape[:2]
+    dx, dy, bw, bh = OVERALL_BOX
+    region = Rect(w - round(dx * s), h - round(dy * s), round(bw * s), round(bh * s))
+    lx, ly, lw, lh = OVERALL_LABEL
+    label = Rect(w - round(lx * s), h - round(ly * s), round(lw * s), round(lh * s))
+    if len(text.pieces(screen, label)) < OVERALL_LETTERS:
+        return None  # no "Overall Damage" over it: not a battle's damage
+    low, high = OVERALL_HEIGHT[0] * s, OVERALL_HEIGHT[1] * s
+    found = [(x, m) for x, m in text.pieces(screen, region) if low <= m.shape[0] <= high and m.shape[1] >= 3 * s]
+    if len(found) < 2:
+        return None
+    found.sort(key=lambda p: p[0])
+    masks = [half for _, mask in found[:-1] for half in split(mask)]  # the last is the % sign
+    digits = ""
+    for mask in masks[-3:]:
+        char, score = font.classify(mask)
+        if not char.isdigit() or score < OVERALL_SURE:
+            return None
+        digits += char
+    value = int(digits) if digits else None
+    return value if value is not None and value <= 100 else None

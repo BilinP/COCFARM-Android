@@ -135,12 +135,12 @@ final class LogPage {
             int lineCount = count;
             main.post(() -> {
                 if (copied == null) {
-                    Snackbar.make(lines, "Couldn't make the report: " + why, Snackbar.LENGTH_LONG).show();
+                    Ui.snack(lines, "Couldn't make the report: " + why, Snackbar.LENGTH_LONG).show();
                     return;
                 }
                 context.getSystemService(android.content.ClipboardManager.class)
                         .setPrimaryClip(android.content.ClipData.newPlainText("COCFARM bug report", copied));
-                Snackbar.make(lines, lineCount > 0 ? "Copied, with " + lineCount + " lines of the log. Paste it into the issue."
+                Ui.snack(lines, lineCount > 0 ? "Copied, with " + lineCount + " lines of the log. Paste it into the issue."
                         : "Copied. There's no log yet: it starts with the first run.", Snackbar.LENGTH_LONG).show();
             });
         }, "report").start();
@@ -174,7 +174,7 @@ final class LogPage {
     private void share() {
         File log = new File(folder, "logs/farmbot.log");
         if (!log.exists()) {
-            Snackbar.make(lines, "No log file yet: it starts with the first run.", Snackbar.LENGTH_SHORT).show();
+            Ui.snack(lines, "No log file yet: it starts with the first run.", Snackbar.LENGTH_SHORT).show();
             return;
         }
         Ui.share(context, log, "text/plain", "Share the log");

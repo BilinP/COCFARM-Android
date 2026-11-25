@@ -151,6 +151,7 @@ def go_to_builder_base(game: Game) -> bool:
     """Sail from the home village to the builder base. True once there."""
     if in_builder_base(game):
         return True
+    memory(game).on_second = False  # the boat lands on the first base
     game.zoom_out()
     boat = _home_boat(game)
     if boat is None:
@@ -231,15 +232,40 @@ def go_to_home_village(game: Game) -> bool:
     if boat is None:
         log.info("Boat home not in view: looking for it at the first base")
         boat = _boat_at_first_base(game)
-    if boat is None:
-        log.info("Boat to the home village not visible")
-        return False
-    game.tap(*boat)
-    if not game.wait_for(T.BATTLE, timeout=20):
-        log.info("Home village didn't load")
-        return False
-    log.info("Sailed back to the home village")
-    return True
+    for tries in range(2):
+        if boat is None:
+            log.info("Boat to the home village not visible")
+            return False
+        game.wait(0.5)  # (found while the view still glided from a drag: found again where it stopped)
+        boat = _find_scaled(game, T.BB_BUILDER_BOAT) or boat
+        game.tap(*boat)
+        if _home_loaded(game, HOME_LOADS):
+            log.info("Sailed back to the home village")
+            return True
+        if not in_builder_base(game) or tries:
+            break
+        # Still here: the tap missed the boat (it took it for the dock, or the view moved).
+        log.info("Boat home tapped, but still in the builder base: looking for it again")
+        boat = _find_scaled(game, T.BB_BUILDER_BOAT)
+    log.info("Home village didn't load")
+    return False
+
+
+HOME_LOADS = 20.0  # s at most from the boat tapped to the home village shown
+
+
+def _home_loaded(game: Game, timeout: float) -> bool:
+    """The home village is shown: its Battle button, and not the builder
+    base's (the two look alike: the home one's picture is found on the
+    builder base's too)."""
+    deadline = game.clock() + timeout
+    while True:
+        game.refresh()
+        if not in_builder_base(game, refresh=False) and game.find(T.BATTLE) is not None:
+            return True
+        if game.clock() >= deadline:
+            return False
+        game.wait(0.5)
 
 
 # Putting the camera back where a picture of the view was taken (upgrading
@@ -361,15 +387,35 @@ def collect_resources(game: Game, tries: int = 4, second_base: bool = True,
     game.zoom_out()
     view = game.refresh().copy()
     collected = _collect_in_view(game, tries, kinds, view)
-    if second_base and {"gold", "elixir"} & set(kinds):  # the gem mine is on the first base
+    mem = memory(game)
+    on_second = tuple(k for k in kinds if k != "gems")
+    if (second_base and on_second and game.clock() < mem.second_rest_until
+            and set(on_second) <= mem.second_rest_kinds):
+        log.debug("Builder base: the second base had nothing to collect lately; not going there yet")
+    elif second_base and {"gold", "elixir"} & set(kinds):  # the gem mine is on the first base
         screen = _to_second_base(game)
-        on_second = tuple(k for k in kinds if k != "gems")
-        collected += [k for k in _collect_in_view(game, tries, on_second, screen) if k not in collected]
+        there = _collect_in_view(game, tries, on_second, screen)
+        collected += [k for k in there if k not in collected]
+        # Nothing there: its collectors were emptied lately, so the trip
+        # (a few drags each way) waits a while.
+        mem.second_rest_until = 0.0 if there else game.clock() + SECOND_BASE_REST
+        mem.second_rest_kinds = set() if there else set(on_second)
+        if not there:
+            log.info("Builder base: nothing to collect on the second base; back in %d min",
+                     SECOND_BASE_REST // 60)
         if restore:
             restore_view(game, view)
+        else:
+            mem.on_second = True
+        # Otherwise left on the second base: what comes next goes by the
+        # Build list (a row tapped takes the camera to its building, wherever
+        # the view) or the Battle button, and the boat home is found from there.
     if collected:
         log.info("Collected builder base %s", ", ".join(collected))
     return collected
+
+
+SECOND_BASE_REST = 1800.0  # s the second base isn't visited after a visit that collected nothing
 
 
 @dataclass
@@ -386,6 +432,9 @@ class Memory:
     cart_view: np.ndarray | None = None
     cart: tuple[int, int] | None = None
     sizes: dict[str, float] = field(default_factory=dict)  # picture -> the size it last matched at (boat, clock)
+    second_rest_until: float = 0.0  # game clock: the second base had nothing to collect, not visited till then
+    second_rest_kinds: set[str] = field(default_factory=set)  # ...of these (more wanted than looked for: it's visited)
+    on_second: bool = False  # the view was left on the second base (a battle, or the boat, brings it back)
 
     def remember_cart(self, screen: np.ndarray, point: tuple[int, int]) -> None:
         self.cart_view, self.cart = screen.copy(), point
@@ -433,6 +482,31 @@ def _to_second_base(game: Game) -> np.ndarray:
         drags += 1
         before = game.screen.copy()
     return game.screen
+
+
+def back_to_first_base(game: Game) -> None:
+    """Where the round starts (the cart, the Clock Tower, the first base's
+    collectors are looked for there): back from the second base, if the
+    last round left the view there and no battle brought it back."""
+    mem = memory(game)
+    if mem.on_second:
+        log.debug("Builder base: left on the second base last round; back to the first")
+        _back_from_second_base(game)
+        mem.on_second = False
+
+
+def _back_from_second_base(game: Game) -> None:
+    """Undo :func:`_to_second_base`: as many drags the other way as it
+    took to get there (each moves the map the same distance), with no
+    look between them. Not known how many: drag until it stops."""
+    drags = memory(game).second_drags
+    if not drags:
+        _to_first_base(game)
+        return
+    for _ in range(drags):
+        game.swipe(*FIRST_BASE_DRAG)
+        game.wait(0.8)
+    game.refresh()
 
 
 BUBBLE_NAMES = (("gold", T.BB_COLLECT_GOLD), ("elixir", T.BB_COLLECT_ELIXIR), ("gems", T.BB_COLLECT_GEMS))
@@ -565,22 +639,27 @@ def _close_window(game: Game, look: bool = True) -> bool:
     return True
 
 
-def collect_elixir_cart(game: Game) -> bool:
+def collect_elixir_cart(game: Game, full_only: bool = False) -> bool:
     """Open the elixir cart by the dock and press Collect (only while it's
-    green: grey means nothing to collect). True if it was collected."""
+    green: grey means nothing to collect). True if it was collected.
+    ``full_only``: only if it's full (its tag the drop on red)."""
     if not (game.has(T.BB_COLLECT_ELIXIR) and game.has(T.BB_CART_COLLECT)):
         return False
     game.zoom_out()
     screen = game.screen if game.screen is not None else game.refresh()
     # Its tag: an elixir drop (as on a collector's bubble), or, once it's full, the drop on red.
     # Looked for around its usual spot only, and where it was last seen, if the view moved.
-    tags = _cart_tags(game, screen, CART_AREA)
+    tags = _cart_tags(game, screen, CART_AREA, full_only)
     known = memory(game).cart_on(screen) if not tags else None
     if known is not None:
-        tags = [p for p in _cart_tags(game, screen, _around(known, CART_NEAR)) if _near(p, [known], BUBBLE_STAYED)]
+        tags = [p for p in _cart_tags(game, screen, _around(known, CART_NEAR), full_only)
+                if _near(p, [known], BUBBLE_STAYED)]
     if not tags:
-        log.info("Elixir cart: nothing to collect")
+        if not full_only:
+            log.info("Elixir cart: nothing to collect")
         return False
+    if full_only:
+        log.info("Elixir cart: full; collecting it before its turn")
     game.tap(*tags[0], jitter=3)
     button = game.wait_for(T.BB_CART_COLLECT, timeout=4)
     if button is not None:
@@ -607,17 +686,19 @@ def _around(point: tuple[int, int], margin: int) -> tuple[int, int, int, int]:
     return point[0] - margin, point[1] - margin, point[0] + margin, point[1] + margin
 
 
-def _cart_tags(game: Game, screen: np.ndarray, area: tuple[int, int, int, int]) -> list[tuple[int, int]]:
+def _cart_tags(game: Game, screen: np.ndarray, area: tuple[int, int, int, int],
+               full_only: bool = False) -> list[tuple[int, int]]:
     """The cart's tag in ``area`` (x0, y0, x1, y1): an elixir drop, or the
-    drop on red once it's full. Only that area (and a margin for the
-    pictures' size) is looked at."""
+    drop on red once it's full (only that, ``full_only``). Only that area
+    (and a margin for the pictures' size) is looked at."""
     from farmbot.geometry import Rect
 
     x0, y0, x1, y1 = area
     pad = 40
     region = Rect(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
     inside = (lambda x, y: x0 <= x <= x1 and y0 <= y <= y1)
-    tags = [m.point for m in game.find_all(T.BB_COLLECT_ELIXIR, threshold=0.75, region=region) if inside(m.x, m.y)]
+    tags = [] if full_only else [m.point for m in game.find_all(T.BB_COLLECT_ELIXIR, threshold=0.75, region=region)
+                                 if inside(m.x, m.y)]
     rx, ry = max(region.x, 0), max(region.y, 0)
     part = screen[ry:region.y + region.h, rx:region.x + region.w]
     tags += [(x + rx, y + ry) for kind, x, y in full_tags(part) if kind == "elixir" and inside(x + rx, y + ry)]
@@ -716,52 +797,74 @@ def upgrade_walls(game: Game, cfg: BuilderConfig, read_resources: Callable[[], L
     kept between calls, the wall's price (see ``village.upgrade_walls``).
     ``last``: a battle comes next, which zooms out by itself, so the walls
     are left as they are (selected, zoomed in on); otherwise they're
-    dropped and the camera put back. Returns how many walls were upgraded."""
+    dropped and the view zoomed out. Returns how many walls were upgraded."""
     from farmbot.tasks.village import payable, wall_budget, walls_done
 
     needed = (T.BUILD, T.WALL_SUGGESTION, T.BB_UPGRADE_TITLE, T.CLOSE)
     if not cfg.walls or not all(game.has(n) for n in needed) or not any(game.has(n) for n in BB_WALL_BUTTONS):
         return 0
-    game.deselect()  # a pinch finger on a wall left selected would move it
-    game.zoom_out()
+    # Not dropped or zoomed out first: the Build list (opened for each
+    # resource) drops what an upgrade left selected, and goes by no view.
     loot = read_resources()
     budget = wall_budget(cfg.walls_use, loot, keep) if loot else []
+    known = {} if known is None else known
     if not budget:
         log.info("Builder walls: %s", "nothing to spare above what's kept" if keep else
                  "how much the storages hold isn't known yet")
+    else:
+        # The price last seen, for each resource: they pay for different walls
+        # (a low wall level takes gold only).
+        budget = [k for k in budget if payable(loot, [k], keep, known.setdefault(k, {}), "Builder walls")]
+    if not budget:
+        if not last:  # an upgrade before may have left something selected, zoomed in on
+            game.deselect()
+            game.zoom_out()
         return 0
-    known = {} if known is None else known
-    if not payable(loot, budget, keep, known, "Builder walls"):
-        return 0
-    view = game.refresh().copy()  # selecting a wall moves the camera onto it
     start, upgraded = loot, {}
     try:
         for i, kind in enumerate(budget):
-            if i and not payable(loot, [kind], keep, known, "Builder walls"):
+            if i and not payable(loot, [kind], keep, known[kind], "Builder walls"):
                 continue
-            count, price, loot = _upgrade_walls(game, loot, [kind], keep, known)
+            count, price, loot = _upgrade_walls(game, loot, [kind], keep, known[kind])
             if count:
                 upgraded[kind] = (count, price)
     finally:
         village.close_all_windows(game)
         if not last:
-            # The map holds two bases: put the camera back, or the boat home
-            # (and the elixir cart) can be out of sight.
-            _drop_and_restore(game, view)
+            # Dropped and zoomed out, not dragged back: what comes next goes
+            # by the Build list, or sails home (the boat is looked for at the
+            # first base whatever the view).
+            _drop(game)
     if not upgraded:
         return 0
     game.wait(1.5)  # the resource counters run down to what's left
     return walls_done(start, read_resources(), upgraded, "builder base wall")
 
 
-def _drop_and_restore(game: Game, view: np.ndarray) -> None:
-    """Drop what's selected (see ``village.deselect``), zoom out and put the
-    camera back to ``view``."""
+def _drop(game: Game) -> None:
+    """Drop what's selected (see ``village.deselect``) and zoom out."""
     from farmbot.tasks.village import deselect
 
     deselect(game)
     game.zoom_out()
-    restore_view(game, view)
+
+
+def _cheapest_wall(game: Game, kind: str):
+    """The cheapest "Wall x N" row that ``kind`` ("gold", "elixir") can pay
+    for: the list filtered to that resource and sorted Cost Min, its first
+    wall. (Unfiltered, the list's walls are spread through it by price, and
+    a low wall level takes gold only.) Without the filter's pictures, the
+    walls found by scrolling."""
+    from farmbot.tasks import build_list
+    from farmbot.tasks.village import find_wall_entry, first_wall
+
+    lst = build_list.BUILDER
+    if all(game.has(n) for n in (T.LIST_FILTER, T.SORT_COST_MIN, lst.resource_filter[kind])):
+        build_list.open_tab(game, "buildings", lst)
+        if build_list.set_filter(game, lst.resource_filter[kind], None, T.SORT_COST_MIN, lst):
+            return first_wall(game)
+        log.info("Builder walls: the list's %s filter didn't set; looking through it unfiltered", kind)
+    return find_wall_entry(game)
 
 
 def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, int],
@@ -770,7 +873,7 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
     many walls were selected and paid for, at what price, and the
     resources left after (as paid)."""
     from farmbot.tasks.village import (MAX_WALLS, WALL_SCREENS, _keep_screen, select_more,
-                                       select_wall, wall_price, find_wall_entry, price_is_red)
+                                       select_wall, wall_price, price_is_red)
 
     # The list doesn't stay open after an upgrade, as it does at home.
     village.close_all_windows(game)
@@ -779,7 +882,7 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
         log.info("Builder walls: the Build list didn't open")
         return 0, None, loot
     game.wait(1.2)
-    entry = find_wall_entry(game)
+    entry = _cheapest_wall(game, budget[0])
     if entry is None:
         log.info("No builder base wall to upgrade in the list")
         return 0, None, loot
@@ -787,6 +890,12 @@ def _upgrade_walls(game: Game, loot: Loot, budget: list[str], keep: dict[str, in
     red = not price and price_is_red(game, entry)
     if price:
         known["price"] = price
+        # The list is filtered to this resource: its price, so the wall
+        # needn't be selected only to find one can't be paid for.
+        spare = getattr(loot, budget[0]) - keep[budget[0]]
+        if spare < price:
+            log.info("Builder walls: %s %s spare, a wall costs %s", f"{spare:,}", budget[0], f"{price:,}")
+            return 0, None, loot
     if not select_wall(game, entry, BB_WALL_BUTTONS):
         alike = max(game.likeness(n) for n in BB_WALL_BUTTONS)
         log.info("Builder walls: no Upgrade button under the wall (%.2f alike)", alike)
@@ -1252,38 +1361,97 @@ def far_point(screen: np.ndarray, centre: tuple[int, int], point: tuple[int, int
 
 
 # ------------------------------------------------------------------ battle
+SEARCH_FOR = 60  # seconds the opponent search may take before it's cancelled and started again
+SEARCHES = 3  # searches before giving up
+LOADING_FOR = 20  # s more for an opponent found (no Cancel any more) to load
+COOLDOWN_MAX = 360  # s an attack cooldown is waited out at most
+COOLDOWN_LOOK = 10  # s between looks at it
+
+
 def start_battle(game: Game) -> None:
-    """Builder base → Battle → Find Now! → the battle screen."""
+    """Builder base → Battle → Find Now! → the battle screen. A search that
+    runs long is cancelled and started again (the game's matchmaking can
+    stall), rather than the whole game being restarted."""
+    for search in range(SEARCHES):
+        _find_now(game)
+        if _opponent_found(game):
+            game.wait(1.0)
+            return
+        game.refresh()
+        if game.find(T.BB_BATTLE_STARTS) or game.find(T.BB_BATTLE_ENDS):  # found just then
+            game.wait(1.0)
+            return
+        if search == SEARCHES - 1:
+            break
+        if not game.click(T.BB_SEARCH_CANCEL):
+            # No Cancel: past the search, the opponent's base loading.
+            if _opponent_found(game, LOADING_FOR):
+                game.wait(1.0)
+                return
+            break
+        log.info("Builder base: no opponent after %d s; cancelled the search to search again", SEARCH_FOR)
+        if not game.wait_for(T.BB_BATTLE, timeout=10):
+            break
+    raise BuilderError("no opponent found")
+
+
+def _find_now(game: Game) -> None:
     from farmbot.tasks.village import clear_popups
 
     for attempt in range(3):
         game.refresh()
         if game.find(T.BB_FIND_NOW):  # the Start Attack window is already open
             game.click(T.BB_FIND_NOW)
-            break
+            return
+        if game.find(T.BB_ATTACK_COOLDOWN):
+            _wait_out_cooldown(game)
+            return
         clear_popups(game)  # the Star Bonus window shows after some battles
         game.refresh()
         # Bottom left only: the Start Attack window has the same axes on top.
         if not game.click(T.BB_BATTLE, region=game.region(BATTLE_AREA)):
             raise BuilderError("builder base Battle button not visible")
         if game.click_when_visible(T.BB_FIND_NOW, timeout=6):
-            break
+            return
+        game.refresh()
+        if game.find(T.BB_ATTACK_COOLDOWN):
+            _wait_out_cooldown(game)
+            return
         log.info("Find Now! didn't show; trying again")
-    else:
-        raise BuilderError("Find Now! didn't show")
+    raise BuilderError("Find Now! didn't show")
+
+
+def _wait_out_cooldown(game: Game) -> None:
+    """The Start Attack window shows "Attack available in: 1m 45s" where
+    Find Now! goes (a battle left early, by a restart, holds attacks back
+    a while): it's kept open until Find Now! comes back, then tapped."""
+    log.info("Builder base: attacks are on a cooldown (a battle was left early); waiting it out")
+    deadline = game.clock() + COOLDOWN_MAX
+    while game.clock() < deadline:
+        game.wait(COOLDOWN_LOOK)
+        game.refresh()
+        if game.click(T.BB_FIND_NOW):
+            log.info("Builder base: the cooldown is over")
+            return
+        if not game.find(T.BB_ATTACK_COOLDOWN):
+            raise BuilderError("the Start Attack window closed during the cooldown")
+    raise BuilderError("attacks still on cooldown")
+
+
+def _opponent_found(game: Game, seconds: float | None = None) -> bool:
+    """Whether the battle screen shows within ``seconds`` (SEARCH_FOR)."""
     from farmbot.tasks.village import attack_despite_obstructed_layout
 
-    deadline = game.clock() + 60
+    deadline = game.clock() + (SEARCH_FOR if seconds is None else seconds)
     while True:
         game.refresh()
         if banner(game, T.BB_BATTLE_STARTS) or banner(game, T.BB_BATTLE_ENDS):
-            break
+            return True
         if attack_despite_obstructed_layout(game):
             continue
         if game.clock() >= deadline:
-            raise BuilderError("no opponent found")
+            return False
         game.wait(1.0)
-    game.wait(1.0)
 
 
 def _rhythm_wait(game: Game, seconds: float, shortest: float = 0.85) -> None:
@@ -1337,7 +1505,7 @@ def deploy_stage(game: Game, cfg: BuilderConfig, first: bool = False,
     On the ``first`` base, the hero is set to ``cfg.first_hero`` first."""
     if first:
         game.look_around()  # "Look around before deploying"
-    game.zoom_out()
+    game.zoom_out(quick=True)  # each stage opens at the game's default zoom
     if first and cfg.use_hero and cfg.first_hero in HEROES:
         choose_hero(game, cfg, cfg.first_hero)
     screen = game.refresh()
@@ -1457,6 +1625,17 @@ class BattleResult:
     screen: np.ndarray | None = None  # the result screen (damage, stars, rewards)
 
 
+def end_battle(game: Game) -> bool:
+    """Press End Battle (and Okay, if it asks) and wait for the result.
+    True once the result's Return Home shows."""
+    if not game.has(T.END_BATTLE) or not game.click(T.END_BATTLE):
+        return False
+    game.wait(0.6)
+    if game.has(T.SURRENDER_OK):
+        game.click_when_visible(T.SURRENDER_OK, timeout=3)
+    return game.wait_for(T.BB_RETURN_HOME, timeout=15) is not None
+
+
 def _finish(game: Game, stages: int) -> BattleResult:
     """Keep the result screen, then Return Home."""
     from farmbot.tasks.attack import look_at_result
@@ -1464,8 +1643,31 @@ def _finish(game: Game, stages: int) -> BattleResult:
     result = BattleResult(stages, None if game.screen is None else game.screen.copy())
     look_at_result(game)
     game.click(T.BB_RETURN_HOME)
-    game.wait_for(T.BB_BATTLE, timeout=15)
+    if game.wait_for(T.BB_BATTLE, timeout=15):
+        if getattr(game, "note_wanted", False):  # a Clan Games challenge's note (it shows a few seconds)
+            from farmbot.tasks import clan_games
+
+            game.games_note = clan_games.catch_note(game)
+        _settle_home(game)
+    memory(game).on_second = False  # home from a battle: on the first base
     return result
+
+
+HOME_SETTLE = 5.0  # s at most for the clouds to clear off the village after a battle
+
+
+def _settle_home(game: Game) -> None:
+    """Back from a battle the Battle button shows through the clouds while
+    they still clear: wait until two looks agree. A pinch (the zoom-out
+    that follows) made while they move lands as a one-finger drag."""
+    before = game.refresh()
+    deadline = game.clock() + HOME_SETTLE
+    while game.clock() < deadline:
+        game.wait(0.4, exact=True)
+        after = game.refresh()
+        if view_change(before, after) < VIEW_STILL:
+            return
+        before = after
 
 
 def attack(game: Game, cfg: BuilderConfig, on_stage: Callable[[int], None] | None = None) -> BattleResult:
@@ -1517,6 +1719,9 @@ def attack(game: Game, cfg: BuilderConfig, on_stage: Callable[[int], None] | Non
             if counting and not countdown:
                 counting = False
             elif now - landed > 5 and countdown and not counting:
+                if not cfg.second_base and end_battle(game):
+                    log.info("First base down: ending the battle there (Attack the second base too is off)")
+                    return _finish(game, stages)
                 log.info("First base down: on to the next one")
                 _rhythm_wait(game, cfg.stage_delay)
                 new_stage = True

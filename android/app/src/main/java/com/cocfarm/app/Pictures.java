@@ -14,7 +14,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
@@ -50,7 +49,7 @@ final class Pictures {
                 String digest = digest(bundled);
                 File target = new File(root, name);
                 if (target.exists()) {
-                    String now = digest(Files.readAllBytes(target.toPath()));
+                    String now = digest(bytes(new java.io.FileInputStream(target)));  // (Files is Android 8+)
                     if (now.equals(digest)) {
                         written.put(name, digest);
                         continue;

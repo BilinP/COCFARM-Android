@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 from PySide6.QtCore import QEasingCurve, QEvent, QFileInfo, QObject, QPoint, QPropertyAnimation, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QFileDialog, QFileIconProvider, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
                                QFrame, QListWidgetItem, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -47,7 +47,7 @@ from qfluentwidgets import (BodyLabel, CaptionLabel, ComboBox, EditableComboBox,
                             TransparentPushButton, TransparentToolButton,
                             isDarkTheme, qconfig, setCustomStyleSheet, setTheme, setThemeColor)
 
-from farmbot import (__version__, accounts, catalog, diag, icons, instances, onboarding, open_now, splash, standard, townhall,
+from farmbot import (__version__, accounts, catalog, diag, gamedata, icons, instances, onboarding, open_now, splash, standard, townhall,
                      upgradable, wakeup)
 from farmbot.config import EMULATORS, Config, DeviceConfig, ensure_config, load_config, save_config, unreachable_minimums, unreachable_note
 from farmbot.form import BY_PATH, apply_form, form_values, parse_amount, plan_summary, validate
@@ -80,9 +80,15 @@ ONLY_HELP = ("Pick buildings, then put them in order: the first gets a builder f
              "Town Hall, walls and heroes have their own settings. Greyed out: nothing left to upgrade at your "
              "Town Hall for now (back once it's upgraded). COCFARM reads the names in the Build list with "
              "Windows' own text reading.")
+EQUIPMENT_HELP = ("Pick hero equipment, then put it in order: the Blacksmith upgrades the first one your ore "
+                  "(Shiny, Glowy, Starry) covers, then the next, up to 3 a round; it takes no builder and is done "
+                  "at once. None picked: any, the equipped pieces first. Each shows its level, from your village "
+                  "data; outlined in green: maxed (Common pieces go to 18, Epic ones to 27). Needs the Blacksmith "
+                  "(Town Hall 8) and Windows' own text reading.")
 RESEARCH_HELP = ("Pick troops, spells and siege machines, then put them in order: the laboratory researches the "
-                 "first it can pay for, and nothing else. None picked: any. Greyed out: nothing left to research "
-                 "at your Laboratory for now (back once it's upgraded).")
+                 "first it can pay for, and nothing else. None picked: any. Each shows its level, from your village "
+                 "data. Greyed out: nothing left to research at your Laboratory for now (back once it's "
+                 "upgraded); outlined in green too: unlocked and maxed there.")
 
 
 class Tone:
@@ -411,6 +417,89 @@ def toggle_button(*args) -> TogglePushButton:
     return b
 
 
+TILE_HEIGHT = 40  # a level tile: "Lv 27" in its top-right corner, right above the name
+TILE_PAD = 10  # each side of the name: the tile is as wide as its name, like a plain chip
+NAME_PX, LEVEL_PX = 13, 10  # the name's and the level's text
+
+
+class LevelTile(TogglePushButton):
+    """A pick's chip that also shows its level, right above its name at its
+    top-right ("Lv 18": its last level is kept for the maxed look, not
+    shown). As wide as its name, as a plain chip is. A pick at its last level is marked in green (an
+    outline and the level) and its name greyed, so it stands apart from
+    what can still go up, and from a pick that's merely switched off."""
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+        self.level: int | None = None
+        self.top: int | None = None
+        self.maxed = False
+        self.setAccessibleName(name)
+        font = QFont(self.font())
+        font.setPixelSize(NAME_PX)
+        font.setWeight(QFont.DemiBold)  # (picked, it's bold: room for that)
+        small = QFont(font)
+        small.setPixelSize(LEVEL_PX)
+        width = max(QFontMetrics(font).horizontalAdvance(name), QFontMetrics(small).horizontalAdvance("Lv 99"))
+        self.setFixedSize(width + 2 * TILE_PAD, TILE_HEIGHT)
+
+    def set_level(self, level: int | None, top: int | None, maxed: bool) -> None:
+        if (level, top, maxed) != (self.level, self.top, self.maxed):
+            self.level, self.top, self.maxed = level, top, maxed
+            self.update()
+
+    def level_text(self) -> str:
+        if self.level is None:
+            return ""
+        return f"Lv {self.level}"
+
+    def paintEvent(self, e) -> None:  # noqa: N802 (Qt's name)
+        super().paintEvent(e)  # (the button itself; it has no text of its own)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        dark, on, enabled = isDarkTheme(), self.isChecked(), self.isEnabled()
+        ink = QColor(0, 0, 0) if dark == on else QColor(255, 255, 255)  # (a picked tile has the accent behind it)
+        marked = self.maxed and not on
+        name_ink = QColor(str(MUTED)) if marked else QColor(ink)
+        level_ink = QColor(str(GOOD)) if marked else QColor(ink)
+        if not on and not self.maxed:
+            level_ink.setAlphaF(0.65)
+        if self.maxed:  # (picked too: the outline still says so)
+            outline = QColor(str(GOOD))
+            outline.setAlphaF(0.85 if enabled else 0.5)
+            painter.setPen(QPen(outline, 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 5, 5)
+        if not enabled and not marked:
+            for c in (name_ink, level_ink):
+                c.setAlphaF(c.alphaF() * 0.45)
+        pad = TILE_PAD
+        text = self.level_text()
+        font = QFont(self.font())
+        font.setPixelSize(NAME_PX)
+        font.setWeight(QFont.DemiBold if on else QFont.Normal)
+        name_h = QFontMetrics(font).height()
+        # The level and the name under it, as one block in the tile's middle; no level
+        # (no village data yet): the name alone in the middle.
+        top = (self.height() - name_h) // 2
+        if text:
+            small = QFont(self.font())
+            small.setPixelSize(LEVEL_PX)
+            small.setWeight(QFont.DemiBold if self.maxed or on else QFont.Normal)
+            level_h = QFontMetrics(small).height()
+            top = (self.height() - level_h - name_h + 2) // 2
+            painter.setFont(small)
+            width = painter.fontMetrics().horizontalAdvance(text)
+            painter.setPen(level_ink)
+            painter.drawText(QRect(self.width() - pad - width, top, width, level_h), Qt.AlignRight | Qt.AlignVCenter, text)
+            top += level_h - 2
+        painter.setFont(font)
+        painter.setPen(name_ink)
+        painter.drawText(QRect(pad, top, self.width() - 2 * pad, name_h), Qt.AlignLeft | Qt.AlignVCenter, self.name)
+        painter.end()
+
+
 def _wrapping(label: QLabel) -> QLabel:
     label.setWordWrap(True)
     return label
@@ -485,6 +574,11 @@ class Picks:
         self.callbacks: list[Callable] = []
         self.on_done: list[Callable] = []
         self.extra: list[QWidget] = []  # (more of its controls, on and off with it)
+        # Each pick's level (and its last level, if known), for tiles that show it; those at their last.
+        self.levels: dict[str, tuple[int, int | None]] = {}
+        self.maxed: set[str] = set()
+        self.hidden: set[str] = set()  # not unlocked (their chips hidden; see the picker's show_only)
+        self.show_only: Callable[[set[str] | None], None] = lambda names: None
         for name, b in buttons.items():
             b.toggled.connect(lambda on, n=name: self._toggled(n, on))
         order.model().rowsMoved.connect(self._moved)
@@ -502,6 +596,7 @@ class Picks:
             b.toggled.connect(lambda on, n=name: self._toggled(n, on))
         self.binding.widgets.extend(buttons.values())
         self.enable(self.on)
+        self._paint_levels()
 
     def names(self) -> list[str]:
         return [self.order.item(i).data(Qt.UserRole) for i in range(self.order.count())]
@@ -513,8 +608,8 @@ class Picks:
         for i, name in enumerate(chosen, 1):
             done = name in self.done
             short, long = self.busy.get(name, ("", ""))
-            item = QListWidgetItem(f"{i}.  {name}" + ("  · nothing left" if done else f"  · {short}" if short
-                                                      else ""))
+            left = "  · maxed" if name in self.maxed else "  · nothing left"
+            item = QListWidgetItem(f"{i}.  {name}" + (left if done else f"  · {short}" if short else ""))
             item.setData(Qt.UserRole, name)
             item.setSizeHint(QSize(0, ORDER_ROW))
             if done:
@@ -555,9 +650,9 @@ class Picks:
         self.enable(self.on)
 
     def pick(self, names, on: bool) -> None:
-        """All or None of a group: All only what can be picked."""
+        """All or None of a group: All only what can be picked (and is shown)."""
         for name in names:
-            if (not on or name not in self.done) and name in self.buttons:
+            if (not on or (name not in self.done and name not in self.hidden)) and name in self.buttons:
                 self.buttons[name].setChecked(on)
 
     def enable(self, on: bool) -> None:
@@ -574,6 +669,20 @@ class Picks:
         if busy != self.busy:
             self.busy = dict(busy)
             self._show(self.names())
+
+    def set_levels(self, levels: dict[str, tuple[int, int | None]], maxed: set[str]) -> None:
+        """Each pick's level and last level (None: not known), and the ones
+        at their last, for the tiles that show them."""
+        if (levels, set(maxed)) != (self.levels, self.maxed):
+            self.levels, self.maxed = dict(levels), set(maxed)
+            self._paint_levels()
+            self._show(self.names())
+
+    def _paint_levels(self) -> None:
+        for name, b in self.buttons.items():
+            if isinstance(b, LevelTile):
+                level, top = self.levels.get(name, (None, None))
+                b.set_level(level, top, name in self.maxed)
 
     def set_done(self, done: set[str], why: str = "") -> None:
         """Greys out ``done`` (``why`` on their tooltips); all back with an empty set."""
@@ -724,7 +833,9 @@ class Page(SmoothScrollArea):
         self.setWidget(body)
 
     def add(self, widget: QWidget) -> QWidget:
-        self.layout_.addWidget(widget)
+        # A group of settings keeps its own height: on a page that fits, the room left over
+        # goes under the last group, not into uneven gaps between them.
+        self.layout_.addWidget(widget, 0, Qt.AlignTop if isinstance(widget, SettingCardGroup) else Qt.Alignment())
         return widget
 
     def show_lock(self, text: str, whole: bool = False) -> None:
@@ -1475,7 +1586,8 @@ def pill(text: str, tone: Tone, background: str) -> QLabel:
 # The resources' colours, for the tags saying what an upgrade may spend.
 RESOURCE_TAGS = {"gold": ("Gold", Tone("#f5c542", "#8a6100"), "rgba(245,197,66,0.18)"),
                  "elixir": ("Elixir", Tone("#d68cff", "#8b3fbf"), "rgba(184,90,230,0.18)"),
-                 "dark": ("Dark elixir", Tone("#b9b2d6", "#3d3654"), "rgba(90,80,130,0.22)")}
+                 "dark": ("Dark elixir", Tone("#b9b2d6", "#3d3654"), "rgba(90,80,130,0.22)"),
+                 "ore": ("Ore", Tone("#7fd3ff", "#1f6a94"), "rgba(80,170,230,0.18)")}
 
 
 WATCH_MARGIN = 12  # px left above the panel scrolled to the top on Start
@@ -3094,7 +3206,8 @@ class FarmbotWindow(FluentWindow):
         return cards[0].fill_now if cards else None
 
     LAZY_PAGES = True  # False: every page built with the window (tests that look through them all)
-    IDLE_BEFORE_PAGES = 1.5  # s without the mouse or keyboard
+    IDLE_BEFORE_PAGES = 3.0  # s without the mouse or keyboard
+    BUILD_BREAK = 1.0  # s between two of them: a click then isn't likely to land while one's being made
 
     def _build_pages_idle(self) -> None:
         """Build the pages not opened yet one at a time, while nobody uses COCFARM."""
@@ -3110,8 +3223,10 @@ class FarmbotWindow(FluentWindow):
         if idle >= self.IDLE_BEFORE_PAGES and hub._build_overlay is None:
             with hub._unseen():
                 self._idle_build()()
-            hub.last_input = time.monotonic() - self.IDLE_BEFORE_PAGES  # the next one after a short break
-            wait = 300
+            # The next one after a short break. Each holds COCFARM up for a quarter of a second,
+            # so back to back (they were 0.3 s apart) a click mostly landed in one: a lag spike.
+            hub.last_input = time.monotonic() - self.IDLE_BEFORE_PAGES
+            wait = int(self.BUILD_BREAK * 1000)
         else:
             wait = int(max(self.IDLE_BEFORE_PAGES - idle, 0) * 1000) + 100
         QTimer.singleShot(min(wait, 60_000), self._build_pages_idle)  # (looked at again within a minute: Qt's int)
@@ -3595,7 +3710,8 @@ class FarmbotWindow(FluentWindow):
                 log.warning("Farm %d's settings can't be read: %s", n, exc)
         return found
 
-    IDLE_BEFORE_PREBUILD = 6.0  # s without the mouse or keyboard
+    IDLE_BEFORE_PREBUILD = 6.0  # s without the mouse or keyboard, COCFARM not the window in front
+    IDLE_BEFORE_PREBUILD_IN_FRONT = 60.0  # s, while it is
 
     def _prebuild(self) -> None:
         """Make the farms' windows one by one while nobody uses COCFARM, so
@@ -3611,13 +3727,16 @@ class FarmbotWindow(FluentWindow):
             return
         self._prebuilding = True
         idle = time.monotonic() - self.last_input
-        if idle >= self.IDLE_BEFORE_PREBUILD:
+        # A second or more each, so while COCFARM is the window in front (someone reading a
+        # page: a click then froze for a second) only after a long while untouched.
+        need = self.IDLE_BEFORE_PREBUILD if QApplication.activeWindow() is None else self.IDLE_BEFORE_PREBUILD_IN_FRONT
+        if idle >= need:
             with self._unseen():
                 self.farm_window(missing[0])
-            self.last_input = time.monotonic() - self.IDLE_BEFORE_PREBUILD  # the next one after a short break
-            wait = 300
+            self.last_input = time.monotonic()  # the next one after as long untouched again
+            wait = int(self.IDLE_BEFORE_PREBUILD * 1000)
         else:
-            wait = int((self.IDLE_BEFORE_PREBUILD - idle) * 1000) + 100
+            wait = min(int((need - idle) * 1000) + 100, 2000)  # (looked at again soon: COCFARM may go behind)
         QTimer.singleShot(wait, self._prebuild_again)
 
     def _prebuild_again(self) -> None:
@@ -4626,11 +4745,46 @@ class FarmbotWindow(FluentWindow):
         _add_expanding(heroes, timing)
         self.depends("attack.hero_abilities", "attack.hero_ability_delay", "attack.ability_health",
                      "attack.ability_max_wait")
+        self.segments(heroes, "attack.hero_walk", FIF.PEOPLE, "Hero walk",
+                      "The Queen (her Healers behind her) or the Royal Champion goes in alone first and walks round "
+                      "the base; the army follows her in. Invisibility Spells hide her when she's hurt.",
+                      {"off": "Off", "queen": "Queen", "champion": "Champion"}, width=90)
+        walking = MoreCard("Walk timing", "How long she walks, and when she's hidden")
+        self.number(walking, "attack.walk_time", FIF.STOP_WATCH, "The army follows at most after",
+                    "Seconds after she goes down; the army goes in sooner if she falls.", "s")
+        self.number(walking, "attack.walk_invisibility_health", FIF.HEART, "Invisibility from health",
+                    "Once her health drops to this, Invisibility Spells keep her hidden, one after another.", "%")
+        self.segments(walking, "attack.walk_fox", FIF.HIDE, "Her Spirit Fox",
+                      "Its level: it hides her every so often, and the spells fill the gaps between.",
+                      {"off": "None", "1-4": "1-4", "5-9": "5-9", "10": "10"}, width=55)
+        self.switch(walking, "attack.walk_spear_early", FIF.SEND, "Rocket Spear ability at once",
+                    "With the Rocket Spear on the Royal Champion, her ability goes as she goes in, far from the "
+                    "defences: it reaches them from further than they reach her. Off: it waits for her last stand.")
+        _add_expanding(heroes, walking)
+        self.depends("attack.hero_walk", "attack.walk_time", "attack.walk_invisibility_health",
+                     "attack.walk_fox", when=("queen", "champion"))
+        self.depends("attack.hero_walk", "attack.walk_spear_early", when=("champion",))
 
         spells = page.add(SettingCardGroup("Spells"))
         self.segments(spells, "attack.spells", Glyph.FLASK, "Spells to cast",
-                      "Bat Spells only: other spells stay in the bar. All: every spell.",
-                      {"bat": "Bat Spells only", "all": "All spells"}, width=120)
+                      "Bat Spells only: other spells stay in the bar. Bats + quakes: Bat Spells and Earthquake "
+                      "Spells. All: every spell.",
+                      {"bat": "Bat Spells only", "earthquake": "Bats + quakes", "all": "All spells"}, width=120)
+        self.number(spells, "attack.quakes_per_spot", Glyph.TARGET, "Earthquakes on one spot",
+                    "Earthquake Spells go this many at a time on one spot (4 open the walls there for the troops); "
+                    "the rest on another spot.")
+        self.segments(spells, "attack.quake_aim", Glyph.TARGET, "Earthquakes go",
+                      "Way in: first, before the troops, on the walls where they go in (outer walls, then the "
+                      "core's); the army goes in behind them from that side, good for Valkyries. Middle: after "
+                      "the troops, round the middle of the base.",
+                      {"path": "Way in", "spots": "Middle"}, width=90)
+        self.segments(spells, "attack.funnel", Glyph.SPREAD, "Funnel first",
+                      "With Earthquakes on the way in: before the army, Troops (two at each end of the way in) or "
+                      "Heroes (all but the Grand Warden, who stays with the army) clear the buildings outside it, "
+                      "so the army walks straight in.",
+                      {"troops": "Troops", "heroes": "Heroes", "off": "Off"}, width=80)
+        self.depends("attack.spells", "attack.quakes_per_spot", "attack.quake_aim", "attack.funnel",
+                     when=("earthquake", "all"))
         self.segments(spells, "attack.spell_placement", Glyph.SPREAD, "Spells go",
                       "One spot: every spell at once, on one spot. Spread: over the base.",
                       {"together": "One spot", "spread": "Spread"}, width=90)
@@ -4649,16 +4803,26 @@ class FarmbotWindow(FluentWindow):
 
     def _attacking_end(self, page: Page) -> None:
         end = page.add(SettingCardGroup("Ending the battle"))
-        self.switch(end, "attack.speed_up", Glyph.FAST, "Play the last minute at 4x",
-                    "Presses the 1x button when it shows, with a minute of the battle left.")
+        self.switch(end, "attack.end_when_full", FIF.HOME,
+                    "End battle when storages are full (turn off to keep attacking)",
+                    "On: the battle ends once the loot taken fills your storages (the ones picked under When "
+                    "these storages are full, or all of them), since the rest couldn't be kept. Off: the battle "
+                    "goes on (for stars, trophies or the rest of the base) until the other rules below end it.")
+        self.switch(end, "attack.speed_up", Glyph.FAST, "Play battles at 4x",
+                    "Presses the 1x button as soon as it shows, while the army goes down.")
+        self.switch(end, "attack.league_bonus", Glyph.TROPHY, "League bonus farming",
+                    "The fastest farming in a high league: every base is attacked (no search minimums), the "
+                    "whole army goes down at once round the base, the heroes' abilities straight away, and the "
+                    "battle is left once the Overall Damage reaches the share below, where the league bonus is "
+                    "paid in full. Daily Star Bonus battles are still fought for stars.")
+        self.number(end, "attack.league_bonus_damage", FIF.COMPLETED, "Leave at this damage",
+                    "Overall Damage to reach before leaving (70% pays the full league bonus).", "%")
+        self.depends("attack.league_bonus", "attack.league_bonus_damage")
         self.switch(end, "attack.star_bonus", Glyph.TROPHY, "Earn the daily Star Bonus",
                     "Until the day's five stars are lit (the strip above Battle), battles are fought for stars "
                     "and never left early over loot. The bonus loot goes to the Clan Castle's treasury.")
         self.switch(end, "attack.end_when_no_loot", FIF.RETURN, "Leave when the loot stops",
                     "Ends the battle early once no more loot is coming in.")
-        self.switch(end, "attack.end_when_full", FIF.HOME, "Leave when the storages are full",
-                    "Ends the battle once the loot taken fills your storages (the ones picked under "
-                    "When these storages are full, or all of them): the rest couldn't be kept.")
         leaving = MoreCard("When exactly to leave", "How long without loot, or how much loot is enough")
         self.number(leaving, "attack.no_loot_seconds", FIF.STOP_WATCH, "No loot for",
                     "Seconds without any loot before leaving.", "s")
@@ -4713,13 +4877,14 @@ class FarmbotWindow(FluentWindow):
                       {"pets": ("upgrade.pets", FIF.LEAF, "Pets", ("dark",)),
                        "hero": ("upgrade.heroes", Glyph.CROWN, "Heroes", ("elixir", "dark")),
                        "research": ("upgrade.lab", FIF.EDUCATION, "Research", ("elixir", "dark")),
+                       "equipment": ("upgrade.equipment", ICON_TOOLS, "Hero equipment", ("ore",)),
                        "building": ("upgrade.buildings", FIF.HOME, "Buildings", ("gold", "elixir", "dark")),
                        "walls": ("walls.enabled", FIF.TILES, "Walls", ("gold", "elixir"))},
                       mirrored=("walls",))
         self.segments(ups, "upgrade.first", FIF.PIN, "Buildings: this kind first",
                       FIRST_HELP,
                       {"none": "Any", "defense": "Defenses", "resource": "Resources", "army": "Army"}, width=90)
-        from farmbot.tasks.row_names import HOME_BUILDINGS, HOME_RESEARCH
+        from farmbot.tasks.row_names import HOME_BUILDINGS, HOME_EQUIPMENT, HOME_RESEARCH
 
         self.pickers = getattr(self, "pickers", {})
         # The time left on what's upgrading, kept current.
@@ -4731,7 +4896,10 @@ class FarmbotWindow(FluentWindow):
                                                     ONLY_HELP, "buildings")
         self.pickers["upgrade.research_only"] = self._picker(
             ups, "upgrade.research_only", HOME_RESEARCH, "Only this research", RESEARCH_HELP,
-            "troops and spells")
+            "troops and spells", tiles=True)
+        self.pickers["upgrade.equipment_only"] = self._picker(
+            ups, "upgrade.equipment_only", HOME_EQUIPMENT, "Only this equipment", EQUIPMENT_HELP, "equipment",
+            tiles=True)
         self.switch(ups, "upgrade.new_buildings", FIF.ADD, "Build new buildings",
                     "Buildings your Town Hall has unlocked but you haven't built yet come first (the cheapest "
                     "take seconds), put down where the game places them; you can move them later. New walls, "
@@ -4756,6 +4924,12 @@ class FarmbotWindow(FluentWindow):
                    "storage is full. Needs the village data, and turns on \"Open the emulator automatically\". "
                    "If the PC is asleep or off then, it opens once the PC is back.", wake)
         wake.checkedChanged.connect(self._wake_switched)
+        self.switch(helpers, "upgrade.pause_when_idle", FIF.PAUSE, "Pause when there's nothing left to upgrade",
+                    "Once every builder and the laboratory are busy (or have nothing left to start), attacking "
+                    "stops: the game is closed until the soonest upgrade under way is done, then the farm "
+                    "carries on. COCFARM and the emulator stay open (any emulator or phone). Needs the village "
+                    "data. Upgrades are tried each round with the loot you have; equipment doesn't count, as "
+                    "it's upgraded at once.")
         self.switch(helpers, "upgrade.apprentice", FIF.PEOPLE, "Put the Builder's Apprentice to work",
                     "When he's idle, he's put on the upgrade under way with the most time left, and kept on it "
                     "until it's done (the game puts him back on it each time he's ready). After each round's "
@@ -4771,13 +4945,15 @@ class FarmbotWindow(FluentWindow):
                      "upgrade.reserve_gold", "upgrade.reserve_elixir", "upgrade.reserve_dark",
                      "upgrade.order", "upgrade.pets", "upgrade.heroes", "upgrade.lab",
                      "upgrade.buildings", "upgrade.first", "upgrade.only", "upgrade.research_only",
+                     "upgrade.equipment", "upgrade.equipment_only",
                      "upgrade.new_buildings",
                      "upgrade.town_hall",
                      "upgrade.wait_for_town_hall", "upgrade.apprentice", "upgrade.lab_assistant",
-                     "upgrade.builders")  # (not wake_up: the builder base's upgrades use it too)
+                     "upgrade.builders")  # (not wake_up or pause_when_idle: the builder base's upgrades use it too)
         self.depends("upgrade.only", "upgrade.first", when=[])  # (picked buildings: no kind goes first)
         self.depends("upgrade.buildings", "upgrade.only")
         self.depends("upgrade.lab", "upgrade.research_only")
+        self.depends("upgrade.equipment", "upgrade.equipment_only")
         # (the tab's note on missing pictures: after the walls, below)
 
     def _walls_tab(self, page: Page) -> None:
@@ -4833,29 +5009,45 @@ class FarmbotWindow(FluentWindow):
             self.cards[path] = card
 
     def _picker(self, group, path: str, groups: dict[str, tuple[str, ...]], title: str, help_text: str,
-                what: str) -> Picks:
+                what: str, tiles: bool = False) -> Picks:
         """Things to pick, as chips, one group at a time (a tab each, saying
         how many are picked in it, and All and None), beside their order: a
         card that folds away, its header saying what's picked. ``what``:
-        what they are ("buildings"), for the header."""
+        what they are ("buildings"), for the header. ``tiles``: each a
+        :class:`LevelTile` (its level shown) rather than a plain chip.
+        Switched off, the card is greyed out and folded away."""
         card = FoldCard(FIF.CHECKBOX, title)
         card.viewLayout.setContentsMargins(48, 10, 24, 16)
         card.viewLayout.setSpacing(6)
         card.viewLayout.addWidget(_muted(_wrapping(CaptionLabel(help_text))))
         # The groups' tabs over it all (narrow windows: the chips beside the order still fit).
+        # Too wide for the card (six heroes in a small window), each tab says only its last
+        # word ("King"), and All and None go on a row of their own under the tabs.
         head = QHBoxLayout()
         head.setContentsMargins(0, 6, 0, 0)
         tabs = SegmentedWidget()
         head.addWidget(tabs)
         head.addStretch(1)
+        pair_box = QWidget()
+        pair_row = QHBoxLayout(pair_box)
+        pair_row.setContentsMargins(0, 0, 0, 0)
         pair = []
         for label in ("All", "None"):
             b = TransparentPushButton(label)
             b.setFixedHeight(28)
             b.setToolTip(f"{label} of this group")
-            head.addWidget(b)
+            pair_row.addWidget(b)
             pair.append(b)
+        head.addWidget(pair_box)
         card.viewLayout.addLayout(head)
+        under = QHBoxLayout()  # (All and None, when they don't fit beside the tabs)
+        under.setContentsMargins(0, 0, 0, 0)
+        under.addStretch(1)
+        card.viewLayout.addLayout(under)
+        short = {h: h.split()[-1] for h in groups}
+        if len(set(short.values())) < len(short):  # (two would read the same)
+            short = {h: h for h in groups}
+        narrow = {"tabs": False, "pair": False}
         columns = QHBoxLayout()
         columns.setContentsMargins(0, 4, 0, 0)
         columns.setSpacing(20)
@@ -4882,13 +5074,17 @@ class FarmbotWindow(FluentWindow):
             made: dict[str, TogglePushButton] = {}
             for heading, names in groups.items():
                 for name in names:
-                    b = toggle_button(name)
-                    b.setFixedHeight(30)
+                    if tiles:
+                        b = LevelTile(name)
+                    else:
+                        b = toggle_button(name)
+                        b.setFixedHeight(30)
                     flows[heading].addWidget(b)
                     made[name] = b
             picks.add_buttons(made)
-            show_group(shown["group"])
+            show_only(only["names"])
         shown = {"group": next(iter(groups))}
+        only: dict[str, set[str] | None] = {"names": None}
         # The order, beside the chips: seen while picking.
         panel = SimpleCardWidget()
         panel.setFixedWidth(250)
@@ -4925,15 +5121,81 @@ class FarmbotWindow(FluentWindow):
             resized()
 
         picks = Picks({}, order, resized, known=[n for names in groups.values() for n in names])
+
+        def show_only(names: set[str] | None) -> None:
+            """Only these picks' chips shown (None: all), and only the groups
+            with one of them: what the player hasn't unlocked (a hero not
+            had, a troop not yet researched) isn't offered."""
+            only["names"] = None if names is None else set(names)
+            picks.hidden = set() if names is None else {n for n in picks.known if n not in names}
+            # Each group's flow holds only its shown chips (a hidden one in it would leave a gap).
+            for heading, names_ in groups.items():
+                flow = flows[heading]
+                while flow.count():
+                    flow.takeAt(0)
+                for name in names_:
+                    b = picks.buttons.get(name)
+                    if b is not None:
+                        b.setVisible(name not in picks.hidden)
+                        if name not in picks.hidden:
+                            flow.addWidget(b)
+            open_ = [h for h, ns in groups.items() if any(n not in picks.hidden for n in ns)]
+            for heading in groups:
+                tabs.items[heading].setVisible(heading in open_)
+            if open_ and shown["group"] not in open_:
+                tabs.setCurrentItem(open_[0])
+            show_group(shown["group"] if shown["group"] in open_ or not open_ else open_[0])
+            for flow in flows.values():
+                flow.invalidate()
+            counted()  # (fewer tabs shown may fit at full length)
+
+        picks.show_only = show_only
         card.fill = make_chips
         self.fill_later.append(card)
 
-        def counted() -> None:
+        def labelled() -> None:
             chosen = set(picks.names())
             for heading, names in groups.items():
                 n = len(chosen.intersection(names))
-                tabs.items[heading].setText(f"{heading} ({n})" if n else heading)
+                label = short[heading] if narrow["tabs"] else heading
+                tabs.items[heading].setText(f"{label} ({n})" if n else label)
+                tabs.items[heading].setToolTip(heading if label != heading else "")
 
+        def counted() -> None:
+            """The tabs' labels (each saying how many are picked in it), as
+            short as the card's width needs, and All and None beside them or under."""
+            margins = card.viewLayout.contentsMargins()
+            room = card.width() - margins.left() - margins.right()
+            if room <= 0:
+                labelled()
+                return
+            # One step as the window narrows: the tabs shorten while All and None stay beside
+            # them; only if even short tabs don't leave room do All and None go under them.
+            beside = 12 + pair_box.sizeHint().width()
+            for want in (False, True):
+                narrow["tabs"] = want
+                labelled()
+                if tabs.sizeHint().width() + beside <= room:
+                    break
+            wrap = tabs.sizeHint().width() + beside > room
+            if wrap != narrow["pair"]:
+                narrow["pair"] = wrap
+                (under if wrap else head).addWidget(pair_box)
+                fit()
+
+        last_width = {"w": -1}
+
+        def resized_card() -> None:
+            """A new width: the labels for it, then the card's height once the chips have
+            rewrapped (narrower, they take more rows: the last ones were cut off). Not on
+            its height: that changes every frame as it opens and closes."""
+            if card.width() == last_width["w"]:
+                return
+            last_width["w"] = card.width()
+            counted()
+            QTimer.singleShot(0, fit)
+
+        _on_resize(card, resized_card)
         for heading in groups:
             tabs.addItem(heading, heading, lambda _=False, h=heading: show_group(h))  # (the click passes True first)  # (the click passes True first)
         tabs.setCurrentItem(shown["group"])
@@ -4964,6 +5226,16 @@ class FarmbotWindow(FluentWindow):
             return f"{len(names)} picked, first to last: {listed}{more}{gone}"
 
         wrapped = _summarised(binding, card.card, summary=summary)
+
+        def enable(on: bool) -> None:
+            """Off (its kind of upgrade, or upgrades, switched off): greyed
+            out and folded, the arrow too; back as it was once on again."""
+            picks.enable(on)
+            if not on and card.isExpand:
+                card.setExpand(False)
+            card.setEnabled(on)
+
+        wrapped._enable = enable
         self._bind(path, wrapped)
         _add_expanding(group, card)
         picks.on_done.append(lambda: card.card.setContent(summary(picks.names())))
@@ -5084,8 +5356,44 @@ class FarmbotWindow(FluentWindow):
                     "Asks the clan for troops, then again as soon as the game lets you.")
         self.number(request, "clan.request_every_minutes", FIF.DATE_TIME, "If the timer can't be read",
                     "Minutes to wait between requests.", "min")
-        self.depends("clan.request_troops", "clan.request_every_minutes")
-        self._note(page, self._template_note("Donating", "Requesting troops"))
+        self.switch(request, "clan.empty_castle", FIF.DELETE, "Empty the Clan Castle to request again",
+                    "Before each request, removes the troops, spells and siege machine in the Clan Castle, so a "
+                    "request goes out again without attacking (for a clan's donated-and-received rules, or so "
+                    "clanmates earn XP). Both happen in the army window (Battle, Edit Army), and only once the "
+                    "request is free. What's removed is gone: attacks may go without Clan Castle troops.")
+        self.depends("clan.request_troops", "clan.request_every_minutes", "clan.empty_castle")
+        self._note(page, self._template_note("Donating", "Requesting troops", "Emptying the Clan Castle"))
+
+        games = page.add(badged(SettingCardGroup("Clan Games")))
+        self.switch(games, "clan_games.enabled", Glyph.TROPHY, "Play the Clan Games",
+                    "While the Clan Games run, opens the challenge board between rounds and starts the best "
+                    "challenge the bot can play: stars, loot, Builder Base wins, destroying buildings, or using a "
+                    "troop or spell that's in your army. Normal rounds then play it. Challenges it can't do "
+                    "(donations, wars, raids, gems...) are skipped. Stops at your score goal.")
+        self.segments(games, "clan_games.goal", FIF.FLAG, "Play up to",
+                      "The score to stop at. 4,000 is the tier with the bonus reward, where many players stop; "
+                      "10,000 is the most a player can earn.", {"4000": "4,000", "10000": "10,000"}, width=80)
+        self.switch(games, "clan_games.trade_in", FIF.SYNC, "Trade in a challenge it can't do",
+                    "If no challenge on the board can be played, starts the lowest one and trashes it (free, but "
+                    "no challenge can start for 10 minutes) so a new one comes in.")
+        self.switch(games, "clan_games.clear_out", FIF.DELETE, "Clear out challenges it can't do",
+                    "When a challenge is done and the board runs low on ones the bot can do, one it can't do is "
+                    "traded in before the next starts, so "
+                    "the board doesn't fill up with them (a new one comes in its place; nothing can start for 10 "
+                    "minutes after). Needs \"Trade in\" on.")
+        self.segments(games, "clan_games.stuck_after", FIF.HISTORY, "Trash a stuck challenge after",
+                      "A challenge that made no progress in this many of its battles is trashed so a new one comes "
+                      "in (nothing can start for 10 minutes after). Needs \"Trade in\" on.",
+                      {"0": "Never", "3": "3 battles", "5": "5 battles"}, width=90)
+        self.switch(games, "clan_games.fight_on", Glyph.SWORDS, "Fight on for the challenge",
+                    "While a challenge for stars or for destroying buildings is going (or one using a unit), "
+                    "home battles are fought to the end like the Star Bonus's: not left early once the loot "
+                    "is in or the storages are full. Battles take longer, and loot comes slower meanwhile.")
+        self.switch(games, "clan_games.rewards", FIF.CERTIFICATE, "Pick the rewards",
+                    "Once the games end, picks a reward in each tier you reached: magic items first, then gems, "
+                    "then the rest. New: check the picks in the game.")
+        self.depends("clan_games.enabled", "clan_games.goal", "clan_games.trade_in", "clan_games.clear_out", "clan_games.stuck_after", "clan_games.fight_on", "clan_games.rewards")
+        self._note(page, self._template_note(catalog.CLAN_GAMES))
 
     def _wars_tab(self, page: Page) -> None:
         war = page.add(badged(SettingCardGroup("Clan wars")))
@@ -5196,8 +5504,11 @@ class FarmbotWindow(FluentWindow):
                     "Presses the 1x button whenever it shows.")
         self.switch(battle, "builder.return_home_after", FIF.AIRPLANE, "Sail home when the bot stops",
                     "Ends in the home village rather than the builder base.")
+        self.switch(battle, "builder.second_base", FIF.SYNC, "Attack the second base too",
+                    "Off: ends the battle once the first base falls, a minute sooner (the second base's stars are given up).")
         self.number(battle, "builder.stage_delay", FIF.STOP_WATCH, "Wait before the second base",
                     "Seconds after the first base falls, while the second loads.", "s")
+        self.depends("builder.second_base", "builder.stage_delay")
 
     def _builder_village_tab(self, page: Page) -> None:
         loot = page.add(SettingCardGroup("Collecting"))
@@ -6537,7 +6848,7 @@ class FarmbotWindow(FluentWindow):
         pickers = getattr(self, "pickers", {})
         if not pickers:
             return
-        from farmbot.tasks.row_names import PICKS
+        from farmbot.tasks.row_names import HOME_EQUIPMENT, PICKS
 
         try:
             path = upgradable.path_for(self.village_file(self.config.profiles.active or None))
@@ -6550,8 +6861,21 @@ class FarmbotWindow(FluentWindow):
                 ("upgrade.research_only", "research", f"Nothing left to research of it at Laboratory {lab} "
                                                       "for now (or it's being researched)")):
             if key in pickers:
-                pickers[key].set_done(upgradable.done(path, village, which, PICKS[which]), why)
+                done = upgradable.done(path, village, which, PICKS[which])
+                pickers[key].set_done(done, why)
                 pickers[key].set_busy(_busy_notes(village, which, PICKS[which]))
+                if which == "research":  # (maxed: nothing left at this Laboratory, of what's unlocked)
+                    levels = upgradable.item_levels(village, "research", PICKS["research"])
+                    shown = {n: (levels.get(n, 0), None) for n in PICKS["research"]} if village else {}
+                    pickers[key].set_levels(shown, done & set(levels))
+                    pickers[key].show_only(set(levels) if village else None)  # (no level: not unlocked)
+        if "upgrade.equipment_only" in pickers:  # (by the export's levels and each piece's last)
+            levels = upgradable.item_levels(village, "equipment", PICKS["equipment"])
+            maxed = upgradable.maxed_equipment(levels)
+            picks = pickers["upgrade.equipment_only"]
+            picks.set_done(maxed, "Maxed: at its last level, nothing left to upgrade")
+            picks.set_levels({n: (lv, gamedata.equipment_max(n)) for n, lv in levels.items()}, maxed)
+            picks.show_only(upgradable.owned_equipment(village, HOME_EQUIPMENT))  # (a hero not had: none of his)
 
     def _show_locked(self, form: dict[str, Any], values: dict[str, Any]) -> None:
         """Mark the settings this account's Town Hall hasn't unlocked yet
@@ -6586,9 +6910,12 @@ class FarmbotWindow(FluentWindow):
     # Per tab of the home village: feature -> the settings it greys out.
     LOCKED_PARTS = {
         "bases": {"dark": ("search.min_dark",)},
-        "army": {"spells": ("attack.spells", "attack.spell_placement", "attack.spell_spot"),
+        "army": {"spells": ("attack.spells", "attack.spell_placement", "attack.spell_spot", "attack.quakes_per_spot",
+                             "attack.quake_aim", "attack.funnel"),
                       "heroes": ("attack.hero_abilities", "attack.hero_ability_delay", "attack.ability_health",
-                                 "attack.ability_max_wait"),
+                                 "attack.ability_max_wait", "attack.hero_walk", "attack.walk_time",
+                                 "attack.walk_invisibility_health", "attack.walk_fox",
+                                 "attack.walk_spear_early"),
                       "super_troops": ("attack.super_troops",),
                       "siege": ("attack.use_siege",)},
         "village": {"dark": ("bot.collect_dark", "storage.dark")},

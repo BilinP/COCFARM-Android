@@ -273,20 +273,34 @@ def setup_needed(settings: dict[str, str]) -> dict[str, str]:
 def set_up(install: Install, inst: Instance, changes: dict[str, str], run: Runner = _run,
            sleep: Callable[[float], None] = time.sleep) -> None:
     """Shut the instance down if needed, then write ``changes``. It is
-    started again by :func:`open_device`."""
+    started again by :func:`open_device`.
+
+    Written only once it has really closed (MuMu saves its own settings
+    as it closes: a write before that can be lost, or left half written,
+    and a DPI it can't read becomes 10, its least), then read back and
+    written once more if any didn't take."""
     manager, index = str(install.manager), str(inst.index)
     if inst.started:
         log.info("Closing %s to change its settings", install.name)
         run([manager, "control", "-v", index, "shutdown"])
-        for _ in range(30):
-            sleep(1)
-            current = next((i for i in instances(install, run) if i.index == inst.index), None)
-            if current is None or not current.started:
-                break
-    args = [manager, "setting", "-v", index]
-    for key, value in changes.items():
-        args += ["-k", key, "-val", value]
-    run(args)
+        sleep(1)
+        current = next((i for i in instances(install, run) if i.index == inst.index), replace(inst, started=False))
+        _wait_stopped(install, current, run, sleep)
+    left = changes
+    for _ in range(2):
+        args = [manager, "setting", "-v", index]
+        for key, value in left.items():
+            args += ["-k", key, "-val", value]
+        run(args)
+        left = {k: v for k, v in setup_needed(read_settings(install, inst.index, run)).items() if k in changes}
+        if not left:
+            return
+        log.info("%s didn't take %s; writing them again", install.name, ", ".join(f"{k}={v}" for k, v in left.items()))
+        sleep(2)
+    log.warning("%s kept %s instead of %s: the game may be drawn at a size COCFARM's pictures don't match. "
+                "Set them in its settings (Display) by hand", install.name,
+                ", ".join(f"{k}={read_settings(install, inst.index, run).get(k)}" for k in left),
+                ", ".join(f"{k}={v}" for k, v in left.items()))
 
 
 def open_device(cfg: DeviceConfig, run: Runner = _run, sleep: Callable[[float], None] = time.sleep,

@@ -7,7 +7,6 @@ import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -211,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
 
         capture = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) {
-                Snackbar.make(start, "COCFARM needs to see the screen to play: press Start and allow it.",
+                Ui.snack(start, "COCFARM needs to see the screen to play: press Start and allow it.",
                         Snackbar.LENGTH_LONG).show();
                 return;
             }
@@ -244,7 +243,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         start.setOnClickListener(v -> askToCapture());
-        pause.setOnClickListener(v -> Bridge.togglePause());
+        pause.setOnClickListener(v -> Bridge.togglePause("Home"));
         stop.setOnClickListener(v -> Bridge.stop(this));
         findViewById(R.id.base_card).setOnClickListener(v -> startActivity(new Intent(this, SeenActivity.class)));
         findViewById(R.id.problem_more).setOnClickListener(v -> {
@@ -617,12 +616,16 @@ public class MainActivity extends AppCompatActivity {
                     // empty. (It was filled with blank views, and such a row came out 0 tall: the
                     // last card vanished, the COCFARM group's updates, backup and tour with it.)
                     row.setWeightSum(columns);
-                    content.addView(row);
+                    // Every card has 5dp each side, the row reaching 5dp past the column's edges.
+                    LinearLayout.LayoutParams across = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT);
+                    across.setMargins(-dp(5), 0, -dp(5), 0);
+                    content.addView(row, across);
                 }
                 View card = groupCard(page, g, scroll);
                 cards.add(card);
                 LinearLayout.LayoutParams room = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
-                room.setMargins(g % columns == 0 ? 0 : dp(5), dp(5), g % columns == columns - 1 ? 0 : dp(5), dp(5));
+                room.setMargins(dp(5), dp(5), dp(5), dp(5));
                 row.addView(card, room);
                 if (rise) {
                     card.setAlpha(0f);
@@ -631,6 +634,14 @@ public class MainActivity extends AppCompatActivity {
                             .setInterpolator(new DecelerateInterpolator(2f)).start();
                 }
                 shown++;
+            }
+            int missing = groups % columns == 0 ? 0 : columns - groups % columns;
+            if (row != null && missing > 0) {
+                // A short last row: a weight shares out what the cards' own margins leave, so the
+                // row gives up the missing cards' margins too, or its cards come out wider.
+                LinearLayout.LayoutParams across = (LinearLayout.LayoutParams) row.getLayoutParams();
+                across.setMarginStart(-dp(5));  // (both: one alone resolves the other side to 0)
+                across.setMarginEnd(-dp(5) + missing * dp(10));
             }
         }
         showResults(results, tiles, scroll);
@@ -1127,7 +1138,8 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------- the Home screen's shape
 
     /** Two columns side by side when the screen is wide enough for two (a phone sideways, a tablet),
-     * each scrolling by itself: the status and its controls on the left (they stay in sight), the rest
+     * each scrolling by itself: the status, its controls and this session's numbers on the left (they
+     * stay in sight), the rest
      * on the right. One column otherwise, the status first. */
     private void layoutDashboard() {
         if (pageWidthDp() < 680) {
@@ -1140,6 +1152,11 @@ public class MainActivity extends AppCompatActivity {
         int at = parent.indexOfChild(whole);
         parent.removeView(whole);
         columns.removeAllViews();
+        // This session's numbers go under the status, which otherwise sits alone over an empty
+        // column while the right one runs on; they stay in sight with it.
+        View numbers = session;  // (found before the dashboard came off the screen)
+        ((ViewGroup) right).removeView(numbers);
+        ((ViewGroup) left).addView(numbers);
         LinearLayout side = new LinearLayout(this);
         side.setOrientation(LinearLayout.HORIZONTAL);
         side.addView(scrolling(left, dp(16), dp(12), dp(8), 0), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
@@ -1270,7 +1287,9 @@ public class MainActivity extends AppCompatActivity {
         String headline = live && !snapshot.optString("headline").isEmpty() ? snapshot.optString("headline") : Bridge.lastStatus;
         if (!running && headline.equals(Bridge.READY)) {
             // Not ready while a step it can't farm without is left (Start would only say so).
-            if (!accessibilityOn()) {
+            if (!Ui.gameInstalled(this)) {
+                headline = "One step before farming: install Clash of Clans.";
+            } else if (!accessibilityOn()) {
                 headline = "One step before farming: let COCFARM tap in the game.";
             } else if (missingPictures != null && !missingPictures.isEmpty()) {
                 headline = "One step before farming: add the button pictures.";
@@ -1470,13 +1489,13 @@ public class MainActivity extends AppCompatActivity {
             String copied = text, problem = why;
             main.post(() -> {
                 if (copied == null) {
-                    Snackbar.make(nav, "Couldn't make the report: " + problem, Snackbar.LENGTH_LONG).show();
+                    Ui.snack(nav, "Couldn't make the report: " + problem, Snackbar.LENGTH_LONG).show();
                     return;
                 }
                 getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("COCFARM bug report", copied));
                 File file = picture.isEmpty() ? null : new File(picture);
                 if (file == null || !file.isFile()) {
-                    Snackbar.make(nav, "The report is copied: paste it into the issue.", Snackbar.LENGTH_LONG).show();
+                    Ui.snack(nav, "The report is copied: paste it into the issue.", Snackbar.LENGTH_LONG).show();
                     return;
                 }
                 Toast.makeText(this, "The report is copied: paste it into the issue, with this picture.",
@@ -1593,7 +1612,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void downloadUpdate() {
         if (BotService.instance != null) {
-            Snackbar.make(start, "Stop farming first: the update restarts COCFARM.", Snackbar.LENGTH_LONG).show();
+            Ui.snack(start, "Stop farming first: the update restarts COCFARM.", Snackbar.LENGTH_LONG).show();
             return;
         }
         LinearProgressIndicator bar = findViewById(R.id.update_progress);
@@ -1653,26 +1672,40 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------- setup
 
     private void refreshSteps() {
-        boolean tapping = accessibilityOn();
+        boolean game = Ui.gameInstalled(this);
+        String tapProblem = TouchService.problem(this);
+        boolean tapping = tapProblem == null;
         boolean notifying = Build.VERSION.SDK_INT < 33
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         boolean pictures = missingPictures != null && missingPictures.isEmpty();
-        String now = tapping + " " + notifying + " " + missingPictures;
+        android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+        boolean unrestricted = power == null || power.isIgnoringBatteryOptimizations(getPackageName());
+        String now = game + " " + tapProblem + " " + notifying + " " + unrestricted + " " + missingPictures;
         if (now.equals(stepsShown)) {  // the home screen refreshes every second: rebuild only on a change
             return;
         }
         stepsShown = now;
         steps.removeAllViews();
+        if (!game) {  // (once it's there, a row saying so is only clutter)
+            addStep(false, R.drawable.ic_village, "Clash of Clans", "Not on this phone yet.",
+                    "Get it", v -> Ui.openStore(this));
+        }
         addStep(tapping, R.drawable.ic_touch, "Let COCFARM tap in the game",
-                tapping ? "Turned on." : "Turn on COCFARM under Accessibility (in Installed or Downloaded apps).",
+                tapping ? "Turned on." : tapProblem,
                 "Turn on", v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         addStep(notifying, R.drawable.ic_notifications, "Allow notifications",
                 notifying ? "Allowed." : "So you can pause and stop it from the notification.",
                 "Allow", v -> notifications.launch(Manifest.permission.POST_NOTIFICATIONS));
+        // Not needed to start, but Android may stop a farm left running in the background without it.
+        addStep(unrestricted, R.drawable.ic_bolt, "Let it run in the background",
+                unrestricted ? "Unrestricted." : "Android may stop COCFARM while it farms. Open COCFARM's app info, "
+                        + "then Battery (or App battery usage), and pick Unrestricted.",
+                "Open", v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", getPackageName(), null))));
         String text = missingPictures == null ? "Checking…" : pictures ? "All there."
                 : "Missing: " + TextUtils.join(", ", missingPictures) + ".";
         addStep(pictures, R.drawable.ic_image, "Button pictures", text, "Where?", v -> showFolder());
-        setup.setVisibility(tapping && notifying && pictures ? View.GONE : View.VISIBLE);
+        setup.setVisibility(game && tapping && notifying && unrestricted && pictures ? View.GONE : View.VISIBLE);
     }
 
     private void addStep(boolean done, int iconRes, String title, String text, String action, View.OnClickListener act) {
@@ -1728,7 +1761,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void copyFolder() {
         getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("COCFARM folder", folder));
-        Snackbar.make(start, "Copied the folder's path", Snackbar.LENGTH_SHORT).show();
+        Ui.snack(start, "Copied the folder's path", Snackbar.LENGTH_SHORT).show();
     }
 
     // ------------------------------------------------------------- links
@@ -1771,6 +1804,8 @@ public class MainActivity extends AppCompatActivity {
     private void villageDialog(JSONObject read) {
         NestedScrollView scroll = Ui.column(this);
         LinearLayout content = Ui.inside(scroll);
+        // In line with the dialog's title (24dp in, the words' own 4dp included), without a page's room at the bottom.
+        content.setPadding(dp(20), 0, dp(20), dp(8));
         String note = read == null ? "It couldn't be read." : read.optString("note");
         if (!note.isEmpty()) {
             TextView words = Ui.text(this, note, com.google.android.material.R.style.TextAppearance_Material3_BodyMedium, R.color.cf_muted);
@@ -1818,32 +1853,34 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------- starting
 
     private boolean accessibilityOn() {
-        String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        String mine = new ComponentName(this, TouchService.class).flattenToString();
-        if (enabled == null) {
-            return false;
-        }
-        for (String service : TextUtils.split(enabled, ":")) {
-            if (service.equalsIgnoreCase(mine)) {
-                return true;
-            }
-        }
-        return false;
+        return TouchService.running();
     }
 
     private void askToCapture() {
+        if (!Ui.gameInstalled(this)) {  // (before Android's screen-share question, not after it)
+            Ui.snack(start, "Clash of Clans isn't on this phone yet.", Snackbar.LENGTH_LONG)
+                    .setAction("Get it", v -> Ui.openStore(this)).show();
+            return;
+        }
         if (!accessibilityOn()) {
-            Snackbar.make(start, "Let COCFARM tap in the game first.", Snackbar.LENGTH_LONG)
+            Ui.snack(start, TouchService.turnedOn(this)
+                            ? "Android hasn't started COCFARM's tapping: turn it off and on again under Accessibility."
+                            : "Let COCFARM tap in the game first.", Snackbar.LENGTH_LONG)
                     .setAction("Turn on", v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))).show();
             return;
         }
         if (missingPictures != null && !missingPictures.isEmpty()) {
-            Snackbar.make(start, "Add the button pictures first.", Snackbar.LENGTH_LONG)
+            Ui.snack(start, "Add the button pictures first.", Snackbar.LENGTH_LONG)
                     .setAction("Where?", v -> showFolder()).show();
             return;
         }
         // Android asks the player each time: COCFARM sees the screen only while it farms.
-        capture.launch(getSystemService(MediaProjectionManager.class).createScreenCaptureIntent());
+        // Android 14+ offers "a single app" too, which would show the bot one app or none:
+        // the whole screen is asked for (the game, and the black bars round it if any).
+        MediaProjectionManager projection = getSystemService(MediaProjectionManager.class);
+        capture.launch(Build.VERSION.SDK_INT >= 34
+                ? projection.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                : projection.createScreenCaptureIntent());
     }
 
     // ------------------------------------------------------------- helpers

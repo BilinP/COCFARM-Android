@@ -182,8 +182,8 @@ def scrub(text: str, names: Iterable[str] = (), words: Iterable[str] | None = No
     text = _IP.sub(_ip, text)
     for word in (private_words() if words is None else words):
         text = re.sub(rf"(?i)(?<![\w]){re.escape(word)}(?![\w])", USER, text)
-    # Player names: exactly as written (a name like "WHAT" mustn't take out
-    # every "what"), longest first (so "Bob 2" goes before "Bob").
+    # Player names: exactly as written (a name like "THE" mustn't take out
+    # every "the"), longest first (so "Ann 2" goes before "Ann").
     for name in sorted({n.strip() for n in names}, key=len, reverse=True):
         if len(name) >= 2 and not _ACCOUNT.fullmatch(name):
             text = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", PLAYER, text)

@@ -4,6 +4,10 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
+import android.content.Context;
+import android.provider.Settings;
+import android.text.TextUtils;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.os.Handler;
@@ -28,6 +32,37 @@ public class TouchService extends AccessibilityService {
     private static final long BURST_MS = 300;
     private volatile String foreground = "";
     FloatingButton button;
+
+    /** The player turned the service on in Settings → Accessibility. Android
+     *  lists it in full (com.cocfarm.app/com.cocfarm.app.TouchService) or
+     *  short (com.cocfarm.app/.TouchService), depending on what wrote it. */
+    static boolean turnedOn(Context context) {
+        String enabled = Settings.Secure.getString(context.getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return false;
+        ComponentName mine = new ComponentName(context, TouchService.class);
+        for (String service : TextUtils.split(enabled, ":")) {
+            ComponentName name = ComponentName.unflattenFromString(service.trim());
+            if (mine.equals(name)) return true;
+        }
+        return false;
+    }
+
+    /** Taps can be made: Android started the service, not only lists it as on. */
+    static boolean running() {
+        return instance != null;
+    }
+
+    /** What's in the way of tapping, for Home and the tour; null when it works. After an
+     *  update Android can keep the service listed as on without starting it again, and
+     *  only turning it off and on starts it. */
+    static String problem(Context context) {
+        if (running()) return null;
+        return turnedOn(context)
+                ? "On in Settings, but Android hasn't started it (it can happen after an update): turn"
+                + " COCFARM off and on again under Accessibility."
+                : "Turn on COCFARM under Accessibility (in Installed or Downloaded apps).";
+    }
 
     @Override
     protected void onServiceConnected() {
@@ -284,8 +319,8 @@ public class TouchService extends AccessibilityService {
     }
 
     /** Two fingers closing in around the middle: zooms the view out. */
-    boolean pinch(int width, int height) {
-        int cx = width / 2, cy = Math.round(height * 0.45f);
+    boolean pinch(int x, int y, int width, int height) {
+        int cx = x + width / 2, cy = y + Math.round(height * 0.45f);
         // The fingers stop well apart: closing them on one spot reads as a tap.
         int far = width / 3, near = width / 8;
         Path left = new Path(), right = new Path();

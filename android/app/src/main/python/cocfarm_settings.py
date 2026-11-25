@@ -31,7 +31,8 @@ from farmbot.units import SIEGE_MACHINES, SPELLS, TROOPS
 SETTINGS_FILE = "farmbot.toml"
 MONEY = {"gold": "Gold", "elixir": "Elixir", "both": "Either"}
 BUILDERS_FIRST = {"defense": "Defenses", "resource": "Resources", "army": "Army", "none": "Any"}
-UPGRADE_KINDS = {"pets": "Pets", "hero": "Heroes", "research": "Research", "building": "Buildings", "walls": "Walls"}
+UPGRADE_KINDS = {"pets": "Pets", "hero": "Heroes", "research": "Research", "equipment": "Hero equipment",
+                 "building": "Buildings", "walls": "Walls"}
 ORDER_HELP = ("Tap them in order: each takes what it can of the full storages before the next. Its switch above "
               "turns one off. Walls (the switch under Village) last get what's left; higher up, they come first.")
 # Settings of the Windows window the phone doesn't show, and why.
@@ -42,6 +43,15 @@ NOT_ON_PHONE = {
     "bot.theme": "the window's look (the phone follows its own light or dark)",
     "notify.on_emulator_restart": "there's no emulator to restart",
     "upgrade.wake_up": "Windows' scheduled task opens COCFARM again",
+}
+
+# Habits whose Windows words speak of the emulator: the phone's fingers (Android
+# gestures) always curve and slide, so their PC caveats are left off here.
+PHONE_HABIT_TEXT = {
+    "curved_swipes": "Swipes follow a slight curve, quick in the middle and slow at each end, as a finger moves.",
+    "hold_deploy": "Troop cards of 8 or more units go down as a person mixes it: mostly a held finger that slides "
+                   "along the side, dropping them in a line, sometimes one held on a spot, and bursts of taps in "
+                   "between. Each card's last few units are always tapped. Needs the card's count to be readable.",
 }
 
 # A phone's first farmbot.toml. Not the Windows one (made for an 860 x 672
@@ -203,7 +213,8 @@ PAGES = [
         {"title": "Alerts", "items": [
             _item(PHONE_ALERTS, "switch", "On this phone", "As the phone's own notifications. Nothing to set up."),
             _item("notify.discord_webhook", "text", "Also on Discord", "Optional. Server Settings → Integrations → "
-                  "Webhooks → New Webhook → Copy Webhook URL, then paste it here."),
+                  "Webhooks → New Webhook → Copy Webhook URL, then paste it here.",
+                  example="https://discord.com/api/webhooks/…"),
             _item("notify.on_storage_full", "switch", "When storage is full"),
             _item("notify.on_stopped", "switch", "When the bot stops", "After a run, or when a problem stops it."),
             _item("notify.daily_summary", "switch", "Daily summary", "Yesterday's attacks and loot, after midnight."),
@@ -274,11 +285,24 @@ PAGES = [
             _item("redline.enabled", "switch", "Follow the red line",
                   "Deploy along the thin boundary the game draws around a base."),
             _item("zone.enabled", "switch", "Otherwise deploy around the buildings",
-                  "Off: use the fixed deploy lines from farmbot.toml."),
+                  "Where there's no red line. Off: along fixed lines at the map's edges."),  # (Windows' words)
         ]},
         {"title": "Spells and siege", "items": [
-            _item("attack.spells", "choice", "Spells to cast", "Bat Spells only: other spells stay in the bar.",
-                  options={"bat": "Bat Spells only", "all": "All spells"}),
+            _item("attack.spells", "choice", "Spells to cast", "Bat Spells only: other spells stay in the bar. "
+                  "Bats + quakes: Bat Spells and Earthquake Spells. All: every spell.",
+                  options={"bat": "Bat Spells only", "earthquake": "Bats + quakes", "all": "All spells"}),
+            _item("attack.quakes_per_spot", "number", "Earthquakes on one spot", "Earthquake Spells go this many "
+                  "at a time on one spot (4 open the walls there for the troops); the rest on another spot.",
+                  suffix="spells", depends=_depends("attack.spells", ["earthquake", "all"])),
+            _item("attack.quake_aim", "choice", "Earthquakes go", "Way in: first, before the troops, on the walls "
+                  "where they go in; the army goes in behind them from that side. Middle: after the troops, round "
+                  "the middle of the base.", options={"path": "Way in", "spots": "Middle"},
+                  depends=_depends("attack.spells", ["earthquake", "all"])),
+            _item("attack.funnel", "choice", "Funnel first", "With Earthquakes on the way in: before the army, "
+                  "Troops (two at each end of the way in) or Heroes (all but the Grand Warden) clear the buildings "
+                  "outside it, so the army walks straight in.",
+                  options={"troops": "Troops", "heroes": "Heroes", "off": "Off"},
+                  depends=_depends("attack.spells", ["earthquake", "all"])),
             _item("attack.spell_placement", "choice", "Spells go", "One spot: every spell at once, on one spot. "
                   "Spread: over the base.", options={"together": "One spot", "spread": "Spread"}),
             _item("attack.spell_spot", "choice", "The spot", "Middle: the centre of the base. Random: a new spot "
@@ -298,8 +322,27 @@ PAGES = [
                   "this hurt instead. 0% uses the time.", suffix="%", depends=_depends("attack.hero_abilities")),
             _item("attack.ability_max_wait", "number", "At the latest after", "Heroes still unhurt by then fire anyway.",
                   suffix="s", depends=_depends("attack.hero_abilities")),
+            _item("attack.hero_walk", "choice", "Hero walk", "The Queen (her Healers behind her) or the Royal "
+                  "Champion goes in alone first and walks round the base; the army follows her in. Invisibility "
+                  "Spells hide her when she's hurt.", options={"off": "Off", "queen": "Queen", "champion": "Champion"}),
+            _item("attack.walk_time", "number", "The army follows at most after", "Seconds after she goes down; "
+                  "the army goes in sooner if she falls.", suffix="s",
+                  depends=_depends("attack.hero_walk", ["queen", "champion"])),
+            _item("attack.walk_invisibility_health", "number", "Invisibility from health", "Once her health drops "
+                  "to this, Invisibility Spells keep her hidden, one after another.", suffix="%",
+                  depends=_depends("attack.hero_walk", ["queen", "champion"])),
+            _item("attack.walk_fox", "choice", "Her Spirit Fox", "Its level: it hides her every so often, and the "
+                  "spells fill the gaps between.", options={"off": "None", "1-4": "1-4", "5-9": "5-9", "10": "10"},
+                  depends=_depends("attack.hero_walk", ["queen", "champion"])),
+            _item("attack.walk_spear_early", "switch", "Rocket Spear ability at once", "With the Rocket Spear on "
+                  "the Royal Champion, her ability goes as she goes in, far from the defences. Off: it waits for "
+                  "her last stand.", depends=_depends("attack.hero_walk", "champion")),
         ]},
         {"title": "Ending the battle", "items": [
+            _item("attack.end_when_full", "switch", "End the battle when storages are full",
+                  "On: the battle ends once the loot taken fills your storages, since the rest couldn't be kept. "
+                  "Off: the battle goes on (for stars, trophies or the rest of the base) until the rules below "
+                  "end it."),
             _item("attack.speed_up", "switch", "Play the last minute at 4x",
                   "Presses the 1x button when it shows, with a minute of the battle left."),
             _item("attack.end_when_no_loot", "switch", "Leave when the loot stops",
@@ -308,6 +351,13 @@ PAGES = [
                   suffix="s", depends=_depends("attack.end_when_no_loot")),
             _item("attack.end_at_loot_share", "number", "Leave once this much loot is taken",
                   "Share of the base's loot to take before leaving. 0 waits for the rules above.", suffix="%"),
+            _item("attack.league_bonus", "switch", "League bonus farming", "The fastest farming in a high "
+                  "league: every base is attacked (no search minimums), the whole army goes down at once round the "
+                  "base, the heroes' abilities straight away, and the battle is left once the Overall Damage "
+                  "reaches the share below, where the league bonus is paid in full."),
+            _item("attack.league_bonus_damage", "number", "Leave at this damage", "Overall Damage to reach "
+                  "before leaving (70% pays the full league bonus).", suffix="%",
+                  depends=_depends("attack.league_bonus")),
             _item("attack.star_bonus", "switch", "Earn the daily Star Bonus", "Until the day's five stars are lit "
                   "(the strip above Battle), battles are fought for stars and never left early over loot."),
         ]},
@@ -362,6 +412,9 @@ PAGES = [
                   depends=_depends("upgrade.enabled")),
             _item("upgrade.heroes", "switch", "Heroes", "With elixir or dark elixir, while a builder is free.",
                   depends=_depends("upgrade.enabled")),
+            _item("upgrade.equipment", "switch", "Hero equipment", "At the Blacksmith with ore (Shiny, Glowy, "
+                  "Starry): no builder, done at once, up to 3 a round. Needs the Blacksmith (Town Hall 8).",
+                  depends=_depends("upgrade.enabled")),
             _item("upgrade.order", "ordered", "What to upgrade first", ORDER_HELP, options=UPGRADE_KINDS,
                   pick_title="Tap them, first to last", depends=_depends("upgrade.enabled")),
             *(_item(f"upgrade.start_{kind}", "amount", f"Start with {name.lower()} at", "Upgrades may start "
@@ -379,6 +432,10 @@ PAGES = [
                   "machines in order: the laboratory researches the first it can pay for, and nothing else. None "
                   "picked: any.", options={name: name for name in PICKS["research"]},
                   pick_title="Tap them, first to last", depends=_depends("upgrade.lab")),
+            _item("upgrade.equipment_only", "ordered", "Only this equipment", "Pick hero equipment in order: the "
+                  "Blacksmith upgrades the first one your ore covers, then the next. None picked: any, the "
+                  "equipped pieces first.", options={name: name for name in PICKS["equipment"]},
+                  pick_title="Tap them, first to last", depends=_depends("upgrade.equipment")),
             _item("bot.read_village", "switch", "Read the village data once a day", "Profile → Settings → More "
                   "Settings → Data Export → Copy: the game's own list of your Town Hall and buildings. What your Town "
                   "Hall hasn't unlocked yet is skipped. Whatever you had copied on the phone is put back."),
@@ -390,6 +447,10 @@ PAGES = [
             _item("upgrade.wait_for_town_hall", "switch", "Rest while the Town Hall upgrades", "Once gold and "
                   "elixir are full and nothing is left to upgrade, the game is closed until the Town Hall is "
                   "done. It looks in every 2 hours.", depends=_depends("upgrade.enabled")),
+            _item("upgrade.pause_when_idle", "switch", "Pause when there's nothing left to upgrade", "Once every "
+                  "builder and the laboratory are busy (or have nothing left to start), attacking stops: the game "
+                  "is closed until the soonest upgrade under way is done, then the farm carries on. Needs the "
+                  "village data. Equipment doesn't count, as it's upgraded at once."),
             _item("upgrade.apprentice", "switch", "Put the Builder's Apprentice to work", "When he's idle, on "
                   "the upgrade with the most time left. Nothing is paid.", depends=_depends("upgrade.enabled")),
             _item("upgrade.lab_assistant", "switch", "Put the Lab Assistant to work", "When he's idle, on the "
@@ -420,6 +481,10 @@ PAGES = [
             _item("clan.request_every_minutes", "number", "Request again after",
                   "Minutes between requests when the Request button's timer can't be read.", suffix="min",
                   depends=_depends("clan.request_troops")),
+            _item("clan.empty_castle", "switch", "Empty the Clan Castle to request again", "Before each request, "
+                  "removes the troops, spells and siege machine in the Clan Castle (Battle, Edit Army), so a request "
+                  "goes out again without attacking. What's removed is gone: attacks may go without Clan Castle "
+                  "troops.", depends=_depends("clan.request_troops")),
         ]},
         {"title": "Ranked battles and clan wars", "items": [
             _item("ranked.enabled", "switch", "Make the day's ranked attacks", "Before farming, each ranked attack "
@@ -433,6 +498,33 @@ PAGES = [
             _item("war.max_stars", "choice", "Attack bases with at most", "0: only bases nobody took a star from "
                   "yet. 3: any base.", options={str(n): f"{n} ★" for n in range(4)},
                   depends=_depends("war.enabled")),
+        ]},
+        {"title": "Clan Games", "items": [
+            _item("clan_games.enabled", "switch", "Play the Clan Games", "Beta. While the Clan Games run, opens "
+                  "the challenge board between rounds and starts the best challenge the bot can play: stars, loot, "
+                  "Builder Base wins, destroying buildings, or using a troop or spell that's in your army. Normal "
+                  "rounds then play it. Challenges it can't do (donations, wars, raids, gems...) are skipped. "
+                  "Stops at your score goal."),
+            _item("clan_games.goal", "choice", "Play up to", "The score to stop at. 4,000 is the tier with the "
+                  "bonus reward; 10,000 is the most a player can earn.",
+                  options={"4000": "4,000", "10000": "10,000"}, depends=_depends("clan_games.enabled")),
+            _item("clan_games.trade_in", "switch", "Trade in a challenge it can't do", "If no challenge on the "
+                  "board can be played, starts the lowest one and trashes it (free, but no challenge can start "
+                  "for 10 minutes) so a new one comes in.", depends=_depends("clan_games.enabled")),
+            _item("clan_games.clear_out", "switch", "Clear out challenges it can't do", "When a challenge is "
+                  "done and the board runs low on ones the bot can do, one it can't do is traded in before the "
+                  "next starts (nothing can start for 10 minutes after). Needs \"Trade in\" on.",
+                  depends=_depends("clan_games.enabled")),
+            _item("clan_games.stuck_after", "choice", "Trash a stuck challenge after", "A challenge that made no "
+                  "progress in this many of its battles is trashed so a new one comes in. Needs \"Trade in\" on.",
+                  options={"0": "Never", "3": "3 battles", "5": "5 battles"},
+                  depends=_depends("clan_games.enabled")),
+            _item("clan_games.fight_on", "switch", "Fight on for the challenge", "While a challenge for stars, "
+                  "destroying buildings or using a unit is going, home battles are fought to the end rather than "
+                  "left once the loot is in. Battles take longer.", depends=_depends("clan_games.enabled")),
+            _item("clan_games.rewards", "switch", "Pick the rewards", "Once the games end, picks a reward in each "
+                  "tier you reached: magic items first, then gems, then the rest. Check the picks in the game.",
+                  depends=_depends("clan_games.enabled")),
         ]},
         {"title": "Clan Capital raids", "items": [
             _item("capital.raid", "switch", "Raid the Clan Capital on Raid Weekends", "Friday to Monday: every "
@@ -486,8 +578,11 @@ PAGES = [
                   "next.", suffix="s", depends=_depends("builder.troop_abilities")),
             _item("builder.ability_batch", "number", "Troop abilities per tap round", "How many troop cards are "
                   "tapped together.", depends=_depends("builder.troop_abilities")),
+            _item("builder.second_base", "switch", "Attack the second base too", "Off: ends the battle once the "
+                  "first base falls, a minute sooner (the second base's stars are given up)."),
             _item("builder.stage_delay", "number", "Wait before the second base",
-                  "Seconds after the first base falls, while the second loads.", suffix="s"),
+                  "Seconds after the first base falls, while the second loads.", suffix="s",
+                  depends=_depends("builder.second_base")),
             _item("builder.speed_up", "switch", "Play at 4x speed", "Presses the 1x button whenever it shows."),
             _item("builder.return_home_after", "switch", "Sail home when the bot stops",
                   "Ends in the home village rather than the builder base."),
@@ -503,6 +598,8 @@ PAGES = [
             _item("", "range", "Every", "A random number of battles in this range each time.",
                   low="builder.cart_every_min", high="builder.cart_every_max", suffix="battles",
                   depends=_depends("builder.collect_cart")),
+            _item("builder.clock_tower", "switch", "Use the Clock Tower's free boost",
+                  "Whenever its clock shows (once a day). Never the Boost that uses a magic item."),
             _item("builder.walls", "switch", "Upgrade builder base walls with spare loot",
                   "Before each battle it upgrades as many walls as the spare loot covers, in one go. Off by "
                   "default: it spends loot."),
@@ -574,7 +671,7 @@ PAGES = [
                   "the same way every time, as fast as it can."),
         ]},
         *({"title": title, "items": [
-            _item(f"human.{h.key}", "switch", h.title, h.text, depends=_depends("human.enabled"))
+            _item(f"human.{h.key}", "switch", h.title, PHONE_HABIT_TEXT.get(h.key, h.text), depends=_depends("human.enabled"))
             for h in HABITS if h.group == group]}
           for group, title in (("touch", "Touch"), ("village", "In the village"), ("battle", "In battle"))),
     ]},

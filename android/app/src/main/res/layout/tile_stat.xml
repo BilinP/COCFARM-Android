@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One number on the home screen: a label, the number, and a line under it. -->
+<!-- One number on the home screen: a label, the number, and a line under it. The number and
+     its line stay on one line each, smaller where the tile is narrow (a 780 dp wide phone). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="0dp"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -17,17 +19,25 @@
 
     <TextView
         android:id="@+id/value"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
+        android:maxLines="1"
         android:text="—"
-        android:textAppearance="@style/TextAppearance.Material3.TitleLarge" />
+        android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+        app:autoSizeMaxTextSize="22sp"
+        app:autoSizeMinTextSize="14sp"
+        app:autoSizeTextType="uniform" />
 
     <TextView
         android:id="@+id/note"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
+        android:maxLines="1"
         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        app:autoSizeMaxTextSize="12sp"
+        app:autoSizeMinTextSize="9sp"
+        app:autoSizeTextType="uniform"
         android:textColor="@color/cf_muted" />
 </LinearLayout>

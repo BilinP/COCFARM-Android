@@ -43,13 +43,24 @@ FIELDS = [
     Field("attack.spell_placement", "text"),
     Field("attack.spells", "text"),
     Field("attack.spell_spot", "text"),
+    Field("attack.quakes_per_spot", "int", 1, 20),
+    Field("attack.quake_aim", "text"),
+    Field("attack.funnel", "text"),
     Field("attack.use_siege", "bool"),
     Field("attack.super_troops", "bool"),
     Field("attack.hero_abilities", "bool"),
     Field("attack.hero_ability_delay", "float", 0, 120),
     Field("attack.ability_health", "percent", 0, 95),
     Field("attack.ability_max_wait", "float", 5, 180),
+    Field("attack.hero_walk", "text"),
+    Field("attack.walk_time", "float", 5, 120),
+    Field("attack.walk_invisibility_health", "percent", 10, 95),
+    Field("attack.walk_fox", "text"),
+    Field("attack.walk_spear_early", "bool"),
+    Field("attack.end_when_full", "bool"),
     Field("attack.speed_up", "bool"),
+    Field("attack.league_bonus", "bool"),
+    Field("attack.league_bonus_damage", "percent", 40, 100),
     Field("attack.star_bonus", "bool"),
     Field("attack.end_when_no_loot", "bool"),
     Field("attack.no_loot_seconds", "float", 3, 180),
@@ -87,6 +98,7 @@ FIELDS = [
     Field("builder.troop_abilities", "bool"),
     Field("builder.ability_batch", "int", 1, 10),
     Field("builder.ability_delay", "float", 0, 60),
+    Field("builder.second_base", "bool"),
     Field("builder.stage_delay", "float", 0, 30),
     Field("builder.first_hero", "text"),
     Field("builder.switch_hero", "bool"),
@@ -96,6 +108,7 @@ FIELDS = [
     Field("builder.collect_resources", "bool"),
     Field("builder.collect_minutes", "int", 0, 1440),
     Field("builder.collect_cart", "bool"),
+    Field("builder.clock_tower", "bool"),
     Field("builder.cart_every_min", "int", 1, 100),
     Field("builder.cart_every_max", "int", 1, 100),
     Field("builder.walls", "bool"),
@@ -123,6 +136,8 @@ FIELDS = [
     Field("upgrade.first", "text"),
     Field("upgrade.only", "buildings"),
     Field("upgrade.research_only", "research"),
+    Field("upgrade.equipment", "bool"),
+    Field("upgrade.equipment_only", "equipment"),
     Field("upgrade.start_gold", "amount"),
     Field("upgrade.start_elixir", "amount"),
     Field("upgrade.start_dark", "amount"),
@@ -133,6 +148,7 @@ FIELDS = [
     Field("upgrade.town_hall", "bool"),
     Field("upgrade.wait_for_town_hall", "bool"),
     Field("upgrade.wake_up", "bool"),
+    Field("upgrade.pause_when_idle", "bool"),
     Field("upgrade.apprentice", "bool"),
     Field("upgrade.lab_assistant", "bool"),
     Field("upgrade.builders", "int", -1, 10),
@@ -152,6 +168,7 @@ FIELDS = [
     Field("clan.donate_fill", "bool"),
     Field("clan.donate_presets", "presets"),
     Field("clan.request_troops", "bool"),
+    Field("clan.empty_castle", "bool"),
     Field("capital.raid", "bool"),
     Field("capital.miner_heal_at", "percent", 10, 95),
     Field("capital.fortress_heal_at", "percent", 10, 95),
@@ -160,6 +177,13 @@ FIELDS = [
     Field("capital.heal_lead", "float", 0, 3),
     Field("capital.spells_near_drop", "bool"),
     Field("capital.lightning_near_drop", "bool"),
+    Field("clan_games.enabled", "bool"),
+    Field("clan_games.goal", "text"),
+    Field("clan_games.trade_in", "bool"),
+    Field("clan_games.clear_out", "bool"),
+    Field("clan_games.stuck_after", "text"),
+    Field("clan_games.fight_on", "bool"),
+    Field("clan_games.rewards", "bool"),
     Field("clan.request_every_minutes", "int", 1, 600),
     # Schedule
     Field("schedule.enabled", "bool"),
@@ -233,7 +257,8 @@ def _display(field: Field, value: Any) -> Any:
         if field.path.startswith(("storage.", "upgrade.start_", "upgrade.reserve_")) and not value:
             return ""  # not known yet; for upgrades, once full
         return f"{value:,}"
-    if field.kind in ("sides", "resources", "hours", "units", "order", "buildings", "research"):
+    if field.kind in ("sides", "resources", "hours", "units", "order", "buildings", "research",
+                      "equipment"):
         return list(value)
     if field.kind == "presets":  # {"13": ["1 Ice Golem", ...]} → {"13": "1 Ice Golem, ..."}
         return {level: ", ".join(entries) for level, entries in value.items()}
@@ -271,7 +296,7 @@ def _parse(field: Field, raw: Any) -> Any:
         return [name for name in dict.fromkeys(raw) if name in BY_NAME]  # in the order given
     if field.kind == "order":
         return list(dict.fromkeys(str(k) for k in raw))  # first to last
-    if field.kind in ("buildings", "research"):
+    if field.kind in ("buildings", "research", "equipment"):
         from farmbot.tasks.row_names import PICKS
 
         return [name for name in dict.fromkeys(raw) if name in PICKS[field.kind]]  # first to last
@@ -371,7 +396,8 @@ def plan_summary(values: dict[str, Any]) -> str:
             parts.append(f"attacks bases with {joiner.join(wants)}" if wants else "attacks any base")
         for path, what in (("bot.collect_resources", "collects"), ("walls.enabled", "walls"),
                            ("upgrade.enabled", "upgrades"), ("clan.donate", "donates"),
-                           ("clan.request_troops", "requests troops"), ("capital.raid", "raids")):
+                           ("clan.request_troops", "requests troops"), ("capital.raid", "raids"),
+                           ("clan_games.enabled", "plays the Clan Games")):
             if values.get(path):
                 parts.append(what)
     if values.get("schedule.enabled"):

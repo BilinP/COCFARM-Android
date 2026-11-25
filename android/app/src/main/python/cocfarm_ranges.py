@@ -20,11 +20,11 @@ here): every choice passes the same checks as before.
 
 from __future__ import annotations
 
-MAX_TOWN_HALL = 18  # the table's top row; higher Town Halls (and an unknown one) use it
+MAX_TOWN_HALL = 19  # the table's top row; higher Town Halls (and an unknown one) use it
 
 
 def _by_town_hall(rows: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
-    """{first Town Hall: (step, highest)} → the row for each Town Hall 1-18."""
+    """{first Town Hall: (step, highest)} → the row for each Town Hall 1-19."""
     out, row = {}, None
     for th in range(1, MAX_TOWN_HALL + 1):
         row = rows.get(th, row)
@@ -101,9 +101,16 @@ NUMBERS = {
     "attack.hero_ability_delay": (0, 60, 1, {}),
     "attack.ability_health": (0, 95, 5, {0: OFF}),
     "attack.ability_max_wait": (5, 180, 5, {}),
+    # Hero walk: the army follows 5-120 s after her; Invisibility from 10-95% health, by 5.
+    "attack.walk_time": (5, 120, 5, {}),
+    "attack.walk_invisibility_health": (10, 95, 5, {}),
+    # Earthquake Spells on one spot: 1-20.
+    "attack.quakes_per_spot": (1, 20, 1, {}),
     # Ending the battle: 3-90 s without loot; leave at 0-100% of the loot (0: off), by 5%.
     "attack.no_loot_seconds": (3, 90, 1, {}),
     "attack.end_at_loot_share": (0, 100, 5, {0: OFF}),
+    # League bonus: leave at 40-100% Overall Damage, by 5.
+    "attack.league_bonus_damage": (40, 100, 5, {}),
     # Collecting every 1-50 rounds.
     "bot.collect_every": (1, 50, 1, {}),
     # Walls: keep 0-100% of the storages, by 5%.
@@ -158,6 +165,7 @@ EMPTY = {
 # "text" a number as text ("10", "0.5"), "amount" with commas ("300,000").
 _TEXT = {"search.min_own_gold_share", "attack.hero_ability_delay", "attack.ability_health",
          "attack.ability_max_wait", "attack.no_loot_seconds", "attack.end_at_loot_share",
+         "attack.walk_time", "attack.walk_invisibility_health", "attack.league_bonus_damage",
          "walls.keep_gold", "walls.keep_elixir", "capital.miner_heal_at", "capital.fortress_heal_at",
          "capital.heal_lead", "builder.troop_delay", "builder.switch_below", "builder.hero_ability_after",
          "builder.ability_delay", "builder.stage_delay", "builder.walls_keep_gold", "builder.walls_keep_elixir"}

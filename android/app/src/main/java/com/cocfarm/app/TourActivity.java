@@ -1,11 +1,9 @@
 package com.cocfarm.app;
 
 import android.Manifest;
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,7 +11,6 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.InputType;
-import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -170,6 +167,7 @@ public final class TourActivity extends AppCompatActivity {
         progress.setMax(TITLES.length * 100);
         progress.setTrackCornerRadius(dp(3));
         progress.setTrackThickness(dp(6));
+        progress.setTrackStopIndicatorSize(0);  // (a dot at the end reads as a stray mark on a step bar)
         progress.setIndicatorColor(getColor(R.color.cf_accent));
         progress.setTrackColor(getColor(R.color.cf_surface_high));
         LinearLayout.LayoutParams bar = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -265,7 +263,7 @@ public final class TourActivity extends AppCompatActivity {
                 "Clash of Clans on this phone, signed in to your account.",
                 "COCFARM allowed to tap in the game: the next step turns it on.",
                 "A minute for this tour."}) {
-            card.addView(checkLine(line));
+            card.addView(needLine(line));
         }
     }
 
@@ -286,16 +284,16 @@ public final class TourActivity extends AppCompatActivity {
         return card;
     }
 
-    private View checkLine(String text) {
+    private View needLine(String text) {
         LinearLayout row = new LinearLayout(this);
         row.setPadding(0, dp(6), 0, dp(6));
-        ImageView tick = new ImageView(this);
-        tick.setImageResource(R.drawable.ic_check_circle);
-        tick.setImageTintList(ColorStateList.valueOf(getColor(R.color.cf_accent)));
-        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(18), dp(18));
+        ImageView bullet = new ImageView(this);  // (a dot, not a tick: none of these is done yet)
+        bullet.setImageResource(R.drawable.dot);
+        bullet.setScaleType(ImageView.ScaleType.CENTER);
+        bullet.setImageTintList(ColorStateList.valueOf(getColor(R.color.cf_accent)));
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(18), dp(20));
         size.setMarginEnd(dp(12));
-        size.topMargin = dp(1);
-        row.addView(tick, size);
+        row.addView(bullet, size);
         row.addView(Ui.text(this, text, com.google.android.material.R.style.TextAppearance_Material3_BodyMedium, R.color.cf_text),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         return row;
@@ -316,14 +314,15 @@ public final class TourActivity extends AppCompatActivity {
     private void showReady() {
         if (readyRows == null || step != 1) return;
         readyRows.removeAllViews();
-        boolean game = gameInstalled(), tapping = accessibilityOn();
+        String tapProblem = TouchService.problem(this);
+        boolean game = Ui.gameInstalled(this), tapping = tapProblem == null;
         boolean notifying = Build.VERSION.SDK_INT < 33
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         readyRow(game, R.drawable.ic_village, "Clash of Clans",
                 game ? "Installed. Open it once and sign in, if you haven't." : "Not on this phone yet.",
-                "Get it", v -> openStore());
+                "Get it", v -> Ui.openStore(this));
         readyRow(tapping, R.drawable.ic_touch, "Let COCFARM tap in the game",
-                tapping ? "Turned on." : "Turn on COCFARM under Accessibility (in Installed or Downloaded apps).",
+                tapping ? "Turned on." : tapProblem,
                 "Turn on", v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         readyRow(notifying, R.drawable.ic_notifications, "Allow notifications",
                 notifying ? "Allowed." : "So you can pause and stop it from the notification, and get alerts.",
@@ -344,34 +343,6 @@ public final class TourActivity extends AppCompatActivity {
             button.setOnClickListener(act);
         }
         readyRows.addView(row);
-    }
-
-    private boolean gameInstalled() {
-        try {
-            getPackageManager().getPackageInfo(FloatingButton.GAME, 0);
-            return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
-    }
-
-    private void openStore() {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + FloatingButton.GAME)));
-        } catch (android.content.ActivityNotFoundException e) {
-            startActivity(new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://play.google.com/store/apps/details?id=" + FloatingButton.GAME)));
-        }
-    }
-
-    private boolean accessibilityOn() {
-        String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        String mine = new ComponentName(this, TouchService.class).flattenToString();
-        if (enabled == null) return false;
-        for (String service : TextUtils.split(enabled, ":")) {
-            if (service.equalsIgnoreCase(mine)) return true;
-        }
-        return false;
     }
 
     // ------------------------------------------------------------- 3. what to farm
@@ -433,6 +404,7 @@ public final class TourActivity extends AppCompatActivity {
         words.addView(help);
         row.addView(words, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         MaterialSwitch suggested = new MaterialSwitch(this);
+        suggested.setContentDescription("Suggested amounts");
         suggested.setChecked(Boolean.TRUE.equals(chosen.getOrDefault("search.suggested", true)));
         LinearLayout.LayoutParams beside = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);

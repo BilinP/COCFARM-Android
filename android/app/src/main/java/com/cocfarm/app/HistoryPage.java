@@ -72,7 +72,7 @@ final class HistoryPage {
     private void share() {
         java.io.File file = new java.io.File(folder, "attacks.csv");
         if (!file.exists()) {
-            com.google.android.material.snackbar.Snackbar.make(content, "No attacks yet: the file starts with the first one.",
+            Ui.snack(content, "No attacks yet: the file starts with the first one.",
                     com.google.android.material.snackbar.Snackbar.LENGTH_SHORT).show();
             return;
         }

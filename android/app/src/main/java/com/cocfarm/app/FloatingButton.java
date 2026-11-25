@@ -67,14 +67,15 @@ final class FloatingButton {
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT);
             params.gravity = Gravity.TOP | Gravity.START;
-            // Where the player left it; at first, the left edge a little below the middle: map on
-            // the village, scouting, battle and results screens, clear of the buttons the bot
-            // looks for (it shows in the screenshots).
+            // On the side and at the height the player left it (kept as a share of the screen,
+            // so it lands in the same place at another screen size); at first, the left edge a
+            // little below the middle: map on the village, scouting, battle and results screens,
+            // clear of the buttons the bot looks for (it shows in the screenshots).
             DisplayMetrics screen = service.getResources().getDisplayMetrics();
             int width = Math.max(screen.widthPixels, screen.heightPixels);
             int height = Math.min(screen.widthPixels, screen.heightPixels);
-            params.x = clamp(prefs.getInt("x", 0), width - size);
-            params.y = clamp(prefs.getInt("y", height * 55 / 100), height - size);
+            params.x = prefs.getBoolean("right", false) ? width - size : 0;
+            params.y = clamp(Math.round(prefs.getFloat("down", 0.55f) * height), height - size);
             view.setOnTouchListener(new Drag());
             view.setVisibility(overGame() ? View.VISIBLE : View.GONE);
             view.setAlpha(0f);
@@ -176,7 +177,7 @@ final class FloatingButton {
     }
 
     private void togglePause() {
-        Bridge.togglePause();
+        Bridge.togglePause("the floating button");
         Toast.makeText(service, Bridge.paused ? "COCFARM pauses after what it's doing now" : "COCFARM carries on",
                 Toast.LENGTH_SHORT).show();
     }
@@ -315,7 +316,14 @@ final class FloatingButton {
                         face.cancelHold();
                     }
                     if (moved) {
-                        prefs.edit().putInt("x", params.x).putInt("y", params.y).apply();
+                        // Dropped, it goes to the nearer side edge: off the middle of the screen,
+                        // where the game's buttons are (a button under it isn't seen by the bot).
+                        DisplayMetrics screen = service.getResources().getDisplayMetrics();
+                        boolean right = params.x + v.getWidth() / 2 > screen.widthPixels / 2;
+                        params.x = right ? screen.widthPixels - v.getWidth() : 0;
+                        windows.updateViewLayout(v, params);
+                        prefs.edit().remove("x").remove("y").putBoolean("right", right)
+                                .putFloat("down", params.y / (float) screen.heightPixels).apply();
                     } else if (!held && !Bridge.stopping) {
                         v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                         togglePause();

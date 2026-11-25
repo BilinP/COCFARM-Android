@@ -49,12 +49,26 @@ hud_height: int | None = None
 name_ui_scale: float | None = None
 
 
+# A screen whose measured scale is further than this from name_ui_scale (a tablet's 0.98)
+# draws its HUD elsewhere at that scale: cut at the fixed one, the name lost a letter and
+# took in the clan tag. There, the first scale measured on that screen size is kept.
+NAME_SCALE_REACH = 0.12
+_size_scales: dict[tuple[int, int], float] = {}
+
+
 def name_screen(game) -> np.ndarray:
     """The screen a player name is cut from (see ``name_ui_scale``)."""
-    if name_ui_scale and getattr(game, "raw", None) is not None:
+    raw = getattr(game, "raw", None)
+    if name_ui_scale and raw is not None:
         from farmbot.game import normalize
 
-        return normalize(game.raw, ui_scale=name_ui_scale)
+        scale = name_ui_scale
+        measured = getattr(game, "ui_scale", 0.0) or 0.0
+        if measured and abs(measured - name_ui_scale) > NAME_SCALE_REACH:
+            scale = _size_scales.setdefault(raw.shape[:2], measured)
+            if abs(measured - scale) > NAME_SCALE_REACH:  # another screen at this size
+                scale = _size_scales[raw.shape[:2]] = measured
+        return normalize(raw, ui_scale=scale)
     return game.screen
 
 OCR_SCRIPT = Path(__file__).parent / "ocr.ps1"
@@ -325,6 +339,11 @@ def for_account(profiles: Profiles, config: Config, mask: np.ndarray,
     if score >= SAME:
         return name, False
     if score >= DIFFERENT:
+        # A name drawn at another screen size resamples to as little as 0.77 like its picture
+        # (12 px tall): read as that profile's name, it's that account.
+        if name and _safe(namer(mask)).lower() == name.lower():
+            log.info("Account name looks a little like %s (%.2f) and reads as it: that profile", name, score)
+            return name, False
         log.info("Account name looks a little like %s (%.2f): not switching", name, score)
         return None, False
     starred = config.profiles.default

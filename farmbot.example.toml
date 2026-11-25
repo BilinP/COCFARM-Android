@@ -58,9 +58,17 @@ max_batches_per_card = 12
 battle_timeout = 180.0
 ability_health = 0.0  # fire a hero's ability at this health share (0.5 = half); 0 = after hero_ability_delay
 ability_max_wait = 45.0
+hero_walk = "off"  # "queen" or "champion": that hero goes in alone first and walks round the base, the army after her
+walk_time = 60.0  # the army follows her in once she falls, or after this many s at most
+walk_invisibility_health = 0.95  # once her health drops to this share, Invisibility Spells keep her hidden, one after another
+walk_fox = "off"  # her Spirit Fox's level ("1-4", "5-9", "10"): the spells fill the gaps between its turns hiding her
+walk_spear_early = true  # the Rocket Spear on the Royal Champion: her ability at once, far from the defences (false: at her last stand)
 spell_placement = "together"  # "together": all on one spot at once; "spread": over the base
 spell_reach = 0.45
-spells = "bat"  # "bat": only Bat Spells; "all": every spell
+spells = "bat"  # "bat": only Bat Spells; "earthquake": Bat Spells and Earthquake Spells; "all": every spell
+quakes_per_spot = 4  # Earthquake Spells this many at a time on one spot (4 open the walls there), the rest elsewhere
+quake_aim = "path"  # "path": quakes first, on the walls where the troops go in (good with Valkyries); "spots": after the troops, round the middle
+funnel = "off"  # quake_aim "path": "off", or before the army "troops" (2 at each end of the way in) or "heroes" (all but the Warden) clear the outside first
 spell_spot = "random"  # one spot: "middle" of the base, or "random" within its middle half
 # War and ranked battles: "side" sends the army in from one side, "corner" from two neighbouring
 # sides, "spread" round the base as when farming. Spells then follow the push, after the delay.
@@ -175,3 +183,17 @@ collect_resources = true
 loop_delay = 3.0
 history = "attacks.csv"
 error_screens = "screens/errors"
+
+[upgrade]
+enabled = false  # upgrade once a storage is full (or holds the start_* amount)
+# What to upgrade first, first to last. "equipment" is hero equipment (ore, at
+# the Blacksmith, no builder); a file without it gets it last.
+order = ["pets", "hero", "research", "equipment", "building", "walls"]
+research_only = []  # e.g. ["Bat Spell", "Electro Dragon"]; empty: any research
+equipment = false  # upgrade hero equipment with ore (Shiny, Glowy, Starry), up to 3 a round
+equipment_only = []  # e.g. ["Giant Gauntlet", "Rage Vial"], first to last; empty: any, equipped first
+wake_up = false  # every builder busy: close COCFARM, Windows opens it when the first upgrade is done
+# Every builder and the laboratory busy (or nothing left to start): stop
+# attacking, close the game until the soonest upgrade is done, then carry on.
+# COCFARM stays open (any emulator or phone); needs bot.read_village.
+pause_when_idle = false

@@ -1,6 +1,10 @@
 package com.cocfarm.app;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.util.TypedValue;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -106,5 +110,36 @@ final class Ui {
     static int dp(Context context, float value) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value,
                 context.getResources().getDisplayMetrics()));
+    }
+
+    /** Clash of Clans is on this phone. */
+    static boolean gameInstalled(Context context) {
+        try {
+            context.getPackageManager().getPackageInfo(FloatingButton.GAME, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** The game's page in the Play Store (or on the web, with no store app). */
+    static void openStore(Context context) {
+        try {
+            context.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + FloatingButton.GAME)));
+        } catch (ActivityNotFoundException e) {
+            context.startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://play.google.com/store/apps/details?id=" + FloatingButton.GAME)));
+        }
+    }
+
+    /** A Snackbar over ``view``'s screen, above the tabs at the bottom (when it has
+     *  them rather than the rail sideways), so it never covers them. */
+    static com.google.android.material.snackbar.Snackbar snack(View view, CharSequence text, int length) {
+        com.google.android.material.snackbar.Snackbar bar = com.google.android.material.snackbar.Snackbar.make(view, text, length);
+        View nav = view.getRootView().findViewById(R.id.nav);
+        if (nav instanceof com.google.android.material.bottomnavigation.BottomNavigationView && nav.isShown()) {
+            bar.setAnchorView(nav);
+        }
+        return bar;
     }
 }

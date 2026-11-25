@@ -23,11 +23,22 @@
         <item name="colorSurfaceContainer">@color/cf_surface</item>
         <item name="colorSurfaceContainerHigh">@color/cf_surface_high</item>
         <item name="colorSurfaceContainerHighest">@color/cf_surface_highest</item>
+        <!-- Snackbars and tooltips: light on the dark pages, with COCFARM's gold (not Material's purple) -->
+        <item name="colorSurfaceInverse">@color/cf_text</item>
+        <item name="colorOnSurfaceInverse">@color/cf_background</item>
+        <item name="colorPrimaryInverse">@color/cf_accent_inverse</item>
         <item name="colorOutline">@color/cf_outline</item>
         <item name="colorOutlineVariant">@color/cf_outline_variant</item>
         <item name="android:statusBarColor">@color/cf_background</item>
         <item name="android:navigationBarColor">@color/cf_background</item>
         <item name="materialCardViewStyle">@style/Widget.COCFARM.Card</item>
+        <item name="chipGroupStyle">@style/Widget.COCFARM.ChipGroup</item>
+    </style>
+
+    <!-- A chip's 48dp touch area already leaves 16dp between rows: Material's 8dp more made
+         the rows look twice as far apart as the chips side by side. -->
+    <style name="Widget.COCFARM.ChipGroup" parent="Widget.Material3.ChipGroup">
+        <item name="chipSpacingVertical">0dp</item>
     </style>
 
     <!-- The launch screen: the logo on COCFARM's dark background (never white), until the app is ready. -->

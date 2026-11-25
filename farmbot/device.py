@@ -61,6 +61,9 @@ class GameNeedsUpdate(GameNotInstalled):
                               "Update it there, then start again")
 
 
+REFOCUS_AWAY = 1.5  # s the game is left in the background by refocus_app
+
+
 class Device(Protocol):
     def screenshot(self) -> np.ndarray: ...
     def tap(self, x: int, y: int) -> None: ...
@@ -792,6 +795,17 @@ class AdbDevice:
 
     def stop_app(self, package: str) -> None:
         self.shell("am", "force-stop", package)
+
+    def refocus_app(self, package: str) -> bool:
+        """Put the game in the background (Android's home button) and bring
+        it straight back, without closing it: the game drops whatever touch it
+        thought was still held (after some battles it stops taking a second
+        finger, and pinches only drag the map). A few seconds, against ~30 for
+        reopening it."""
+        self.shell("input", "keyevent", "3")
+        time.sleep(REFOCUS_AWAY)
+        self.start_app(package)
+        return True
 
     def foreground_package(self) -> str:
         out = self.shell("dumpsys", "window")

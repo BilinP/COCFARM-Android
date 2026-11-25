@@ -27,11 +27,15 @@ LABORATORY = 1000007
 WALL = 1000010
 CLAN_CASTLE = 1000014
 BUILDERS_HUT = 1000015
+BLACKSMITH = 1000070
 BOB_CONTROL = 1000065  # in the builder base: its builder (B.O.B) works in the home village too
 OTTO_OUTPOST = 1000078  # the builder base's second builder (O.T.T.O)
 
 # The export's lists whose items carry "timer" while upgrading (or researched).
 UPGRADING_LISTS = ("buildings", "traps", "units", "spells", "siege_machines", "heroes", "pets")
+# The home village's lists whose levels are kept (the builder base's own, "units2" and the like, aren't:
+# a few of their names are the home village's too).
+LEVEL_LISTS = ("units", "siege_machines", "spells", "heroes", "equipment")
 # The builder base's lists, by who works on them: its builders (the Master Builder, O.T.T.O) or its Star Laboratory.
 BUILDER_BASE_LISTS = {"buildings2": "builders", "traps2": "builders", "heroes2": "builders", "units2": "lab"}
 # The helpers (the export's "helpers"): each speeds up the upgrade it's put on ("helper_recurrent"
@@ -79,12 +83,13 @@ WALL_ELIXIR_AT = 5  # walls take elixir from level 5, which Town Hall 5 opens
 SUPER_TROOPS_AT = 11
 SIEGE_AT = 12  # the Workshop
 PETS_AT = 14
+BLACKSMITH_AT = 8
 
 # What each feature is called, at the top of a page or tab it leaves out.
 NAMES = {"research": "Research", "clan": "The clan", "heroes": "Heroes", "pets": "Pets",
          "dark": "Dark elixir", "spells": "Spells", "super_troops": "Super troops",
          "siege": "Siege machines", "builder_base": "The Builder Base", "wall_elixir": "Walls with elixir",
-         "builder_heroes": "Builder base heroes"}
+         "builder_heroes": "Builder base heroes", "equipment": "Hero equipment"}
 
 
 @dataclass
@@ -115,6 +120,8 @@ class Village:
     helping: dict[int, int] = field(default_factory=dict)
     # How many there are of each building and trap (the game's id), upgrading or not.
     counts: dict[int, int] = field(default_factory=dict)
+    # The home village's troops, siege machines, spells, heroes and hero equipment: the game's id -> level.
+    levels: dict[int, int] = field(default_factory=dict)
 
     @property
     def upgrading(self) -> frozenset[int]:
@@ -173,13 +180,18 @@ def parse(text: str | None) -> Village | None:
                     end = helped_end(when, item["timer"], level, cooldown)
                     helping[HELPED_BY[key]] = item["data"]
                 finishing[item["data"]] = (*finishing.get(item["data"], ()), int(end))
+    levels: dict[int, int] = {}
+    for key in LEVEL_LISTS:
+        for item in data.get(key) if isinstance(data.get(key), list) else ():
+            if isinstance(item, dict) and isinstance(item.get("data"), int) and isinstance(item.get("lvl"), int):
+                levels[item["data"]] = max(item["lvl"], levels.get(item["data"], 0))
     builder_finishing: dict[str, tuple[int, ...]] = {}
     for key, slot in BUILDER_BASE_LISTS.items():
         for item in data.get(key) if isinstance(data.get(key), list) else ():
             if isinstance(item, dict) and isinstance(item.get("timer"), int) and item["timer"] > 0:
                 builder_finishing[slot] = (*builder_finishing.get(slot, ()), when + item["timer"])
     return Village(hall, buildings, heroes=count("heroes"), pets=count("pets"),
-                   finishing={k: tuple(sorted(v)) for k, v in finishing.items()}, counts=counts,
+                   finishing={k: tuple(sorted(v)) for k, v in finishing.items()}, counts=counts, levels=levels,
                    builder_finishing={k: tuple(sorted(v)) for k, v in builder_finishing.items()},
                    helpers={k: v for k, v in helpers.items() if v[0] > 0}, helping=helping,
                    builder_heroes=count("heroes2") if isinstance(data.get("heroes2"), list) else -1,
@@ -244,7 +256,7 @@ def locked(village: Village | None) -> dict[str, str]:
     """What this account can't do yet, each with why: "research", "clan"
     (donations, requests, the Clan Capital), "heroes", "pets", "dark",
     "spells", "super_troops", "siege", "builder_base", "wall_elixir",
-    "builder_heroes".
+    "builder_heroes", "equipment".
     Nothing when it isn't known."""
     if village is None:
         return {}
@@ -260,6 +272,9 @@ def locked(village: Village | None) -> dict[str, str]:
                          "no hero in the village yet")
     if village.pets == 0:
         out["pets"] = (f"pets come at Town Hall {PETS_AT}" if th < PETS_AT else "no pet unlocked yet")
+    if not village.has(BLACKSMITH):
+        out["equipment"] = (f"the Blacksmith comes at Town Hall {BLACKSMITH_AT}" if th < BLACKSMITH_AT else
+                            "there's no Blacksmith in the village yet")
     if th < DARK_ELIXIR_AT:
         out["dark"] = f"dark elixir comes at Town Hall {DARK_ELIXIR_AT}"
     if th < SPELLS_AT:

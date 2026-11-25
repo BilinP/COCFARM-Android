@@ -1,7 +1,8 @@
 """The game's names for the ids its village export uses (``data``).
 
 Generated from coc.py's static game data (coc/static/static_data.json);
-an id missing here (something newer) shows as "Building #N" and the like."""
+Newer ids (Town Hall 19's update, 16 Nov 2026) from ClashKing's static data
+(ClashKingInc/ClashKingAssets, 17 Nov 2026); an id missing here (something newer) shows as "Building #N" and the like."""
 
 BUILDINGS: dict[int, str] = {
     1000000: "Army Camp",
@@ -80,6 +81,10 @@ BUILDINGS: dict[int, str] = {
     1000093: "Helper Hut",
     1000097: "Crafting Station",
     1000102: "Super Wizard Tower",
+    1000105: "Guardian Shrine",
+    1000106: "Squad Barracks",
+    1000107: "Spiky Tower",
+    1000108: "Firecracker Tower",
 }
 
 TROOPS: dict[int, str] = {
@@ -180,6 +185,23 @@ TROOPS: dict[int, str] = {
     4000165: "The Disarmer",
     4000167: "Meteor Golem",
     4000177: "Meteor Golem",
+    4000109: "Ruin Witch",
+    4000185: "Elephant Rider",
+    4000188: "Sky Wagon",
+    4000190: "Yeti Undertaker",
+    4000194: "Totem Thrower",
+    4000195: "Barch Squad",
+    4000196: "Giant Wizard Squad",
+    4000197: "Wall Breaker Squad",
+    4000198: "Minion Squad",
+    4000199: "Balloon Squad",
+    4000200: "Golem Witch Squad",
+    4000201: "Hog Rider Squad",
+    4000202: "Miner Squad",
+    4000203: "Healer Squad",
+    4000204: "P.E.K.K.A Titan Squad",
+    4000205: "Dragons Squad",
+    4000206: "Baby Dragon Squad",
 }
 
 SPELLS: dict[int, str] = {
@@ -202,6 +224,8 @@ SPELLS: dict[int, str] = {
     26000098: "Revive Spell",
     26000109: "Ice Block Spell",
     26000120: "Totem Spell",
+    26000123: "Angry Spell",
+    26000153: "Heroic Spell",
 }
 
 HEROES: dict[int, str] = {
@@ -212,6 +236,7 @@ HEROES: dict[int, str] = {
     28000004: "Royal Champion",
     28000005: "Battle Copter",
     28000006: "Minion Prince",
+    28000007: "Dragon Duke",
 }
 
 PETS: dict[int, str] = {
@@ -226,6 +251,7 @@ PETS: dict[int, str] = {
     73000010: "Spirit Fox",
     73000011: "Angry Jelly",
     73000016: "Sneezy",
+    73000017: "Greedy Raven",
 }
 
 EQUIPMENT: dict[int, str] = {
@@ -245,6 +271,7 @@ EQUIPMENT: dict[int, str] = {
     90000013: "Rocket Spear",
     90000014: "Spiky Ball",
     90000015: "Frozen Arrow",
+    90000016: "Monolith Arrow",
     90000017: "Giant Arrow",
     90000019: "Heroic Torch",
     90000020: "Healer Puppet",
@@ -264,7 +291,36 @@ EQUIPMENT: dict[int, str] = {
     90000049: "Meteor Staff",
     90000050: "Frost Flake",
     90000051: "Stick Horse",
+    90000052: "Fire Heart",
+    90000053: "Rocket Backpack",
+    90000056: "Stun Blaster",
+    90000057: "Flame Blower",
+    90000059: "Electro Fangs",
+    90000060: "Revenge Deck",
+    90000061: "Portal Pendant",
 }
+# (Newer than coc.py's data, 18 Nov 2026: the Dragon Duke, Monolith Arrow and the pieces from 52 on, by
+# the id tables of four other tools that read the export. They agree but on 16 and 59, split two and two
+# between Monolith Arrow and Electro Fangs: an account's export (Blacksmith 7) holds 16 but not 59, nor Stun
+# Blaster (Blacksmith 9), and Electro Fangs needs Blacksmith 10, so 16 is taken for Monolith Arrow. 62
+# and 63, in the exports but named nowhere yet, show as "Equipment #N".)
+
+# Each piece's rarity (the game's Common, Epic), and how far each rarity goes: a Common piece to level
+# 18, an Epic one to 27 (as the Blacksmith and the wiki give them, 18 Nov 2026).
+EQUIPMENT_EPIC = frozenset({
+    "Giant Gauntlet", "Spiky Ball", "Snake Bracelet", "Stick Horse",
+    "Frozen Arrow", "Magic Mirror", "Action Figure", "Monolith Arrow",
+    "Fireball", "Lavaloon Puppet", "Heroic Torch",
+    "Rocket Spear", "Electro Boots", "Frost Flake",
+    "Dark Crown", "Meteor Staff", "Portal Pendant",
+    "Rocket Backpack", "Revenge Deck",
+})
+EQUIPMENT_MAX = {"Common": 18, "Epic": 27}
+
+
+def equipment_max(name: str) -> int:
+    """The highest level the piece ``name`` goes to."""
+    return EQUIPMENT_MAX["Epic" if name in EQUIPMENT_EPIC else "Common"]
 
 TRAPS: dict[int, str] = {
     12000000: "Bomb",

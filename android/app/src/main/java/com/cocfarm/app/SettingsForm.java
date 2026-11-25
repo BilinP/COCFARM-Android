@@ -67,6 +67,8 @@ final class SettingsForm extends ContextWrapper {
     // A switch that fills settings in when turned on ("Suggested amounts"), and is turned off by
     // typing in one of them: its path, the settings' boxes, and which switch each one turns off.
     private final Map<String, MaterialSwitch> switchOf = new HashMap<>();
+    private final Map<String, ChipGroup> chipsOf = new HashMap<>();  // a several-choice setting's chips
+    private boolean filledForAuto;  // the storages were picked for Auto switch here, not by the player
     private final Map<String, TextView> editOf = new HashMap<>();
     private final Map<String, NumberScroller> scrollerOf = new HashMap<>();  // a number's scroller
     private final Map<String, Runnable> scrollBy = new HashMap<>();  // a choice -> the scroller whose steps follow it
@@ -364,6 +366,7 @@ final class SettingsForm extends ContextWrapper {
             beside.setMarginStart(dp(12));
             row.addView(toggle, beside);
             row.setOnClickListener(v -> toggle.toggle());
+            toggle.setContentDescription(item.optString("title"));  // (a screen reader says what it turns on)
             box.addView(row);
             errors.put(path, showError);
         } else {
@@ -447,8 +450,15 @@ final class SettingsForm extends ContextWrapper {
                 row.addView(high, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                 return row;
             }
-            default:  // amount, number, text
-                return field(path, kind, "", item.optString("suffix"));
+            default: {  // amount, number, text
+                TextInputLayout layout = field(path, kind, "", item.optString("suffix"));
+                String example = item.optString("example");
+                if (!example.isEmpty()) {  // what goes in an empty box, greyed (it's no floating label)
+                    layout.setHintEnabled(false);
+                    layout.getEditText().setHint(example);
+                }
+                return layout;
+            }
         }
     }
 
@@ -626,6 +636,7 @@ final class SettingsForm extends ContextWrapper {
             String key = option[0];
             Chip chip = (Chip) LayoutInflater.from(this).inflate(R.layout.chip_filter, group, false);
             chip.setText(option[1]);
+            chip.setTag(key);
             chip.setChecked(chosen.contains(key));
             chip.setOnCheckedChangeListener((v, on) -> {
                 List<String> now = list(path);
@@ -635,7 +646,44 @@ final class SettingsForm extends ContextWrapper {
             });
             group.addView(chip);
         }
+        chipsOf.put(path, group);
         return group;
+    }
+
+    /** Pick ``keys`` in a several-choice setting: on its chips when they're shown (their
+     *  listeners save it), else in the values. */
+    private void pick(String path, String... keys) {
+        ChipGroup group = chipsOf.get(path);
+        if (group != null && group.isAttachedToWindow()) {
+            for (String key : keys) {
+                View chip = group.findViewWithTag(key);
+                if (chip instanceof Chip) ((Chip) chip).setChecked(true);
+            }
+            return;
+        }
+        List<String> now = list(path);
+        for (String key : keys) if (!now.contains(key)) now.add(key);
+        try {
+            values.put(path, new JSONArray(now));
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private void unpick(String path, String... keys) {
+        ChipGroup group = chipsOf.get(path);
+        if (group != null && group.isAttachedToWindow()) {
+            for (String key : keys) {
+                View chip = group.findViewWithTag(key);
+                if (chip instanceof Chip) ((Chip) chip).setChecked(false);
+            }
+            return;
+        }
+        List<String> now = list(path);
+        now.removeAll(java.util.Arrays.asList(keys));
+        try {
+            values.put(path, new JSONArray(now));
+        } catch (JSONException ignored) {
+        }
     }
 
     /** A list too long to show: what's picked, opening a dialog to change it. */
@@ -683,6 +731,10 @@ final class SettingsForm extends ContextWrapper {
             TextView edit = layout.getEditText();
             edit.setText(shown.optString(key));
             edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            // A long army wraps onto more lines rather than running off the box's edge (still
+            // one line of text: Enter doesn't break it). After the input type, which resets these.
+            edit.setHorizontallyScrolling(false);
+            edit.setMaxLines(5);
             edit.addTextChangedListener(new TextWatcher() {
                 public void beforeTextChanged(CharSequence s, int a, int b, int c) {
                 }
@@ -919,6 +971,20 @@ final class SettingsForm extends ContextWrapper {
                 } catch (JSONException ignored) {
                 }
             }
+        }
+        if (typed && path.equals("bot.mode")) {
+            if ("auto".equals(value) && list("bot.stop_when_full").isEmpty()) {
+                // Auto switch moves on when storages fill: start from gold and elixir (as the tour
+                // does) rather than turn the pick red and not save it.
+                pick("bot.stop_when_full", "gold", "elixir");
+                filledForAuto = true;
+            } else if (filledForAuto) {
+                // Away from Auto switch untouched: those storages would stop the bot in one village.
+                filledForAuto = false;
+                unpick("bot.stop_when_full", "gold", "elixir");
+            }
+        } else if (path.equals("bot.stop_when_full") && typed) {
+            filledForAuto = false;  // the player's own pick now
         }
         Runnable follow = scrollBy.get(path);
         if (follow != null) follow.run();

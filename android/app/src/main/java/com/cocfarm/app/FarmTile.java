@@ -25,6 +25,7 @@ public final class FarmTile extends TileService {
     }
 
     @Override
+    @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")  // (the Intent one only below Android 14)
     public void onClick() {
         if (BotService.instance != null) {
             Bridge.stop(this);

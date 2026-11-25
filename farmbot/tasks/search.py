@@ -32,6 +32,16 @@ class NextNotFound(SearchError):
     """No base showed: its Next button never came (or went away)."""
 
 
+class GameRefreshed(SearchError):
+    """The game's "New Content" window showed instead of a base: Refresh was
+    pressed and the game reloaded to the village. Searching again is all it takes."""
+
+
+class ConnectionLost(SearchError):
+    """The game lost the server while scouting ("Connection lost"): Try Again
+    was tapped and the village loaded again. Searching again is all it takes."""
+
+
 class LootUnreadable(SearchError):
     """The bases showed, but their loot couldn't be read."""
 
@@ -431,6 +441,10 @@ def _find_a_match(game: Game, timeout: float) -> bool:
 
 
 NEXT_TIMEOUT = 40  # s for a base to show (slow emulators and networks take a while on the clouds)
+# ...and at most this long while the game still says "Searching for opponents...": offline,
+# it says so for about a minute before "Connection lost" (MuMu, 24 Nov 2026: 62 s).
+SEARCHING_MOST = 90
+ARMY_RETAP = 3  # s the army window may stay up after Attack! before it's tapped again
 RECALIBRATE_AFTER = 10  # s without Next before the UI scale is measured again on this screen
 # "Unable to attack Village!" is drawn a little differently on some emulators:
 # looked for less strictly than other pictures (it's only looked for here).
@@ -448,6 +462,12 @@ def white_share(screen) -> float:
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     white = (hsv[..., 1] <= WHITE_PIXEL[0]) & (hsv[..., 2] >= WHITE_PIXEL[1])
     return float(white.mean())
+
+
+def _searching(game: Game) -> bool:
+    """Still "Searching for opponents...": the white clouds of a search, not
+    the lockout's white screen."""
+    return game.has(T.SEARCHING) and game.find(T.SEARCHING) is not None
 
 
 def _unable_to_attack(game: Game) -> bool:
@@ -474,20 +494,50 @@ def _blocked(game: Game, why: str) -> SearchBlocked:
                          "Try again later.\" (a battle left without surrendering still runs)")
 
 
+def _connection_lost(game: Game) -> bool:
+    """The phone's "Connection lost" dialog over the scouting screen: its
+    button tapped, and the village waited for. True if it showed."""
+    from farmbot.tasks.village import RECONNECT_BUTTONS, wait_for_reload
+
+    for name in RECONNECT_BUTTONS:
+        if game.has(name) and game.find(name):
+            log.warning("The game lost its connection while scouting (%s showing): tapped it",
+                        name.rsplit("/", 1)[-1])
+            game.click(name)
+            game.wait(1.5)
+            wait_for_reload(game)
+            return True
+    return False
+
+
 def _wait_for_base(game: Game, timeout: float = NEXT_TIMEOUT) -> bool:
     """Until a base shows (its Next button). Raises :class:`SearchBlocked`
     if the game says it can't attack. Halfway through a long wait the UI
-    scale is measured again, in case Next is there at another size."""
+    scale is measured again, in case Next is there at another size. While
+    the game still says "Searching for opponents..." it's waited on up to
+    :data:`SEARCHING_MOST`: offline, "Connection lost" comes next."""
     start = game.clock()
     deadline = start + timeout
     recalibrated = False
+    still_searching = False
+    tapped = start
     while True:
         game.refresh()
         if game.find(T.NEXT):
             return True
         if _unable_to_attack(game):
             raise _blocked(game, "its words")
-        if game.has(T.RETURN_HOME) and game.find(T.RETURN_HOME):
+        if _connection_lost(game):
+            raise ConnectionLost("the game lost its connection while scouting: tapped Try Again")
+        if game.clock() - tapped >= ARMY_RETAP and game.has(T.ARMY_ATTACK) and game.click(T.ARMY_ATTACK):
+            # the army window still up: its Attack! tap went unanswered (18 Nov 2026)
+            tapped = game.clock()
+            log.info("The army window's Attack! didn't answer: tapped it again")
+            continue
+        if refresh_for_new_content(game):
+            raise GameRefreshed("the game's \"New Content\" window showed instead of a base: refreshed")
+        searching = _searching(game)
+        if not searching and game.has(T.RETURN_HOME) and game.find(T.RETURN_HOME):
             # A result screen instead of a base: the lockout's own Return
             # Home (its words drawn too differently to match), or a battle
             # left on its result.
@@ -502,11 +552,42 @@ def _wait_for_base(game: Game, timeout: float = NEXT_TIMEOUT) -> bool:
             if game.recalibrate(T.NEXT) and game.find(T.NEXT):
                 return True
         if game.clock() >= deadline:
+            if searching and game.clock() < start + max(timeout, SEARCHING_MOST):
+                # The clouds, not the lockout: a slow or lost connection.
+                # Waited on: "Connection lost" comes next if it's gone.
+                if not still_searching:
+                    still_searching = True
+                    log.warning("Still \"Searching for opponents\" after %ds: waiting up to %ds for the game",
+                                timeout, max(timeout, SEARCHING_MOST))
+                game.wait(0.5, exact=True)
+                continue
+            if searching:
+                log.warning("Still \"Searching for opponents\" after %ds: the game's connection looks lost",
+                            max(timeout, SEARCHING_MOST))
+                return False
             if white_share(game.screen) >= LOCKOUT_WHITE:
                 raise _blocked(game, "a white screen where a base should be")
             log.warning("Next not detected after %ds: %s", timeout, _screen_state(game))
             return False
         game.wait(0.5, exact=True)
+
+
+NEW_CONTENT_RELOAD = 120  # s the game takes at most to reload to the village after Refresh
+
+
+def refresh_for_new_content(game: Game) -> bool:
+    """The game's "New Content" window ("Builder needs a moment to add new
+    game data to the village... Choose Refresh to reload"): Refresh pressed,
+    and the village waited for. Cancel would only bring it back. True if the
+    window showed."""
+    if not (game.has(T.NEW_CONTENT) and game.find(T.NEW_CONTENT)):
+        return False
+    log.info("The game has new content to load: pressing Refresh")
+    if not game.click(T.NEW_CONTENT_REFRESH):
+        return False
+    if not game.wait_for(T.BATTLE, timeout=NEW_CONTENT_RELOAD):
+        log.warning("The village didn't show within %ds of Refresh", NEW_CONTENT_RELOAD)
+    return True
 
 
 def _press_next(game: Game, delay: float) -> None:

@@ -164,6 +164,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         instances.mark(args.farm)
     else:
         cfg = _config(args)
+        # The farm's folder, as the window has it: the village data is kept there and read once a
+        # day, not again every run (18 Nov: each run from the command line went to Data Export).
+        cfg.home = Path(args.config or "farmbot.toml").resolve().parent
     if args.max_attacks is not None:
         cfg.bot.max_attacks = args.max_attacks
     missing = [] if cfg.search.maintain_only else catalog.missing(TemplateLibrary(cfg.bot.templates), required_only=True)

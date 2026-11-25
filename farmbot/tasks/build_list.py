@@ -18,7 +18,7 @@ Locked" (the Town Hall, until the buildings it lists are built).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import cv2
 import numpy as np
@@ -42,6 +42,11 @@ LIST_BOTTOM_FROM_BOTTOM = 110  # ...and end above its tabs
 LIST_PAGE = 400  # a swipe in a sorted list: under the list's height, so no row is skipped
 SLOW_SWIPE_MS = 900
 MAX_SORTED_SCROLLS = 30  # the whole list, top to bottom
+# Sorted Cost Max, a page whose cheapest row costs this many times the
+# budget is followed by one swiped past unread (two swipes in a row); a
+# swipe too far, onto a page that starts with a row it covers, is undone
+# a page at a time, so the dearest row it covers is never passed.
+FAR_PRICE = 3
 LIST_PANEL_W = 360  # the list's panel, from the screen's right edge
 LIST_STILL = 4  # mean change in the panel under this: it didn't scroll (a scroll: 40+;
                 # its own shimmer, ~1; the village beside it animates, so it's left out)
@@ -97,6 +102,7 @@ BUSY_VALUE = (85, 125)  # under way: 103; a heading: 78
 
 GREEN_HUE, GREEN_SATURATION, GREEN_VALUE = (30, 60), 80, 150  # the resource Confirm (40, 111, 226)
 CONFIRM_TIMEOUT = 3
+BB_CONFIRM_TIMEOUT = 5
 
 # The builder counter ("3/5": free of all) above the Build button, in Build
 # text heights from its middle.
@@ -105,6 +111,8 @@ BUILDERS = (-3.0, -6.8, 2.75, 1.2)  # x, y, width, height
 # over Build, its number beside the builder's face ("[face] 2/2"): from
 # the face, at the same height. Its pieces before the number are skipped.
 BUILDERS_ALONE = (-1.6, -6.8, 3.2, 1.2)
+# The laboratory's counter, right of the builders' (the builder base's Star Laboratory: "0/1").
+LAB = (0.2, -6.8, 3.2, 1.2)
 # Where a goblin shows over the counters, in Build text heights from its
 # middle: the builders' left of it, the laboratory's right.
 GOBLINS = (-4.0, 4.0, -9.0, -5.5)  # x from, to; y from, to
@@ -125,6 +133,7 @@ PAY_GREEN = ((35, 150, 170), (50, 255, 255))  # HSV low, high
 PAY_SIZE = (150, 5000)  # this wide, and this many pixels, at least
 PAY_ICON = {"gold": ((18, 150, 170), (32, 255, 255)), "elixir": ((125, 120, 120), (160, 255, 255))}
 PAY_ICON_PIXELS = 500
+PAY_HEIGHT = 50  # px at least: the button is ~86 tall, a window's stat bars 13-28
 
 
 @dataclass(frozen=True)
@@ -164,6 +173,58 @@ class Row:
     x: int  # the cost icon's middle
     y: int
     h: int  # the cost icon's height
+    # Its name line as a small black and white picture (see row_look): tells
+    # apart rows of one price. Left out of comparing rows (and of hashing).
+    look: tuple = field(default=(), compare=False, repr=False)
+
+
+# A row's name line: this many icon heights from the screen's right edge
+# (from, to: clear of the timer) and above the price line (from, to).
+LOOK_X = (20.0, 5.0)
+LOOK_Y = (1.65, 0.6)
+LOOK_SIZE = (120, 12)  # the name line shrunk to this many pixels across, down
+LOOK_SHIFT = 3  # columns a look may slide either way and still be the same
+LOOK_ALIKE = 0.3  # how far apart two looks of one name are at most (rows seen: <0.1 alike, >0.6 not)
+
+
+def row_look(screen: np.ndarray, y: int, h: int) -> tuple:
+    """The name over the price at ``y`` (its icon ``h`` tall): how much
+    white lettering each column of it has, shrunk to LOOK_SIZE; () if off
+    the screen."""
+    height, width = screen.shape[:2]
+    x0, x1 = max(width - round(LOOK_X[0] * h), 0), width - round(LOOK_X[1] * h)
+    y0, y1 = max(y - round(LOOK_Y[0] * h), 0), y - round(LOOK_Y[1] * h)
+    if x1 <= x0 or y1 <= y0:
+        return ()
+    hsv = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    white = ((hsv[..., 2] >= 200) & (hsv[..., 1] <= 70)).astype(np.uint8) * 255
+    grid = cv2.resize(white, LOOK_SIZE, interpolation=cv2.INTER_AREA) >= 96
+    return tuple(int(n) for n in grid.sum(axis=0))
+
+
+def same_look(a: tuple, b: tuple) -> bool:
+    """Whether two rows' looks are one name (slid a little either way).
+    Either not known: as good as."""
+    if not a or not b or len(a) != len(b):
+        return True
+    va, vb = np.array(a, float), np.array(b, float)
+    n = len(va)
+    for s in range(-LOOK_SHIFT, LOOK_SHIFT + 1):
+        pa, pb = va[max(s, 0):n + min(s, 0)], vb[max(-s, 0):n + min(-s, 0)]
+        if np.abs(pa - pb).sum() <= LOOK_ALIKE * max(pa.sum(), pb.sum(), 1):
+            return True
+    return False
+
+
+def passed_over(row: Row, skip) -> bool:
+    """Whether ``row`` is one in ``skip``: (resource, price, look) of the
+    rows that wouldn't upgrade. Another row of the same price isn't."""
+    return any(kind == row.kind and price == row.price and same_look(look, row.look)
+               for kind, price, *rest in (skip or ()) for look in [rest[0] if rest else ()])
+
+
+def skip_key(row: Row) -> tuple:
+    return row.kind, row.price, row.look
 
 
 def _median_hsv(screen: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> tuple[float, float, float] | None:
@@ -430,7 +491,16 @@ def _left_out(game: Game, lst: BuildList = HOME) -> list[int]:
 def rows(game: Game, kinds: tuple[str, ...] = ("gold", "elixir", "dark"), lst: BuildList = HOME) -> list[Row]:
     """The priced rows on show, top to bottom (the rows ``lst`` leaves out
     and rows whose price can't be read are left out; so are upgrades under
-    way, which show a timer and no price, and new walls, "FREE")."""
+    way, which show a timer and no price, and new walls, "FREE"). A price
+    that can't be paid is drawn red, which isn't read: those rows are left
+    out too (see ``priced``)."""
+    return [r for _, r in priced(game, kinds, lst) if r is not None]
+
+
+def priced(game: Game, kinds: tuple[str, ...], lst: BuildList = HOME) -> list:
+    """Every cost icon on show, top to bottom, with its row: (icon, Row),
+    or (icon, None) when its price couldn't be read (drawn red, mostly;
+    see ``price_affordable``)."""
     w, h = game.size
     screen = game._current()
     column = Rect(w - ICON_COLUMN, LIST_TOP, ICON_COLUMN, h - LIST_BOTTOM_FROM_BOTTOM - LIST_TOP)
@@ -444,9 +514,8 @@ def rows(game: Game, kinds: tuple[str, ...] = ("gold", "elixir", "dark"), lst: B
                 continue
             price = game.vision.read_number(screen, Rect(m.x - round(PRICE_LEFT * m.h), m.y - m.h // 2 - 2,
                                                          round(PRICE_WIDTH * m.h), m.h + 4), T.LOOT_FONT)
-            if price:
-                found.append(Row(kind, price, m.x, m.y, m.h))
-    return sorted(found, key=lambda r: r.y)
+            found.append((m, Row(kind, price, m.x, m.y, m.h, row_look(screen, m.y, m.h)) if price else None))
+    return sorted(found, key=lambda f: f[0].y)
 
 
 # Under the list's last row is its plain dark brown background: when the
@@ -460,6 +529,26 @@ END_SATURATION = 120  # ...and saturation's median at least this
 TOWN_HALL_SCROLLS = 3  # pages of a Cost Max list looked through for the Town Hall (it's among the dearest)
 
 
+class ListClosed(Exception):
+    """The list went away under a swipe (taken for a tap on a row, which
+    opens that building): swiping on would drag the village about."""
+
+
+def _swiping(fn):
+    """``fn``, a look down the list, gives ``None`` if the list closes under it."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ListClosed:
+            log.warning("Upgrades: the list closed under a swipe; not swiping on (the village would be dragged)")
+            return None
+    return run
+
+
+@_swiping
 def town_hall_row(game: Game, kinds: tuple[str, ...] = ("gold",),
                   lst: BuildList = HOME) -> tuple[Row | None, bool]:
     """In a tab sorted Cost Max, the Town Hall's priced row (its upgrade),
@@ -487,8 +576,7 @@ def town_hall_row(game: Game, kinds: tuple[str, ...] = ("gold",),
             return None, seen  # all of it on show: nothing to scroll to
         before = game.screen
         game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
-        game.wait(0.8)
-        game.refresh()
+        settle_list(game)
         if list_still(before, game.screen):
             return None, seen
     return None, seen
@@ -519,20 +607,39 @@ def list_still(before: np.ndarray | None, after: np.ndarray | None) -> bool:
     return float(np.abs(after[area].astype(np.int16) - before[area].astype(np.int16)).mean()) < LIST_STILL
 
 
+def settle_list(game: Game, looks: int = 4) -> None:
+    """After a swipe of the list: wait until it stops gliding (a slow
+    swipe still coasts a little), the screen refreshed. Rows read while it
+    moves are tapped where they no longer are (a wall, say, slid into the
+    upgrade's place). Raises ListClosed if the list isn't there any more."""
+    game.wait(0.8)
+    before = game.refresh().copy()
+    for _ in range(looks):
+        game.wait(0.3, exact=True)
+        if list_still(before, game.refresh()):
+            break
+        before = game.screen.copy()
+    if getattr(game, "vision", None) is not None and not list_shown(game):
+        raise ListClosed()
+
+
+@_swiping
 def first_affordable(game: Game, budget: dict[str, int], lst: BuildList = HOME,
-                     skip: set[tuple[str, int]] | None = None, only: frozenset[str] | None = None) -> Row | None:
+                     skip: set[tuple] | None = None, only: frozenset[str] | None = None,
+                     pages: list[int] | None = None) -> Row | None:
     """In a tab sorted Cost Max, scroll down to the first row that
     ``budget`` (resource -> amount) covers: the dearest upgrade it can pay
-    for, passing over rows priced as in ``skip`` (resource, price): ones
+    for, passing over the rows in ``skip`` (see ``passed_over``): ones
     already tried that wouldn't upgrade. With ``only``, just rows whose
     name is read as one of those buildings (see row_names.py; none if
-    the names can't be read). ``None`` if the list ends without one."""
+    the names can't be read). ``None`` if the list ends without one.
+    ``pages`` (a list) gets the swipes it took added to it."""
     w, h = game.size
     x, y = w - LIST_SWIPE_X, h - LIST_SWIPE_FROM_BOTTOM
     game.refresh()
     for _ in range(MAX_SORTED_SCROLLS):
-        found = [r for r in rows(game, tuple(budget), lst)
-                 if r.price <= budget[r.kind] and (r.kind, r.price) not in (skip or ())]
+        on_show = rows(game, tuple(budget), lst)
+        found = [r for r in on_show if r.price <= budget[r.kind] and not passed_over(r, skip)]
         if found and only:
             from farmbot.tasks import row_names
 
@@ -545,16 +652,143 @@ def first_affordable(game: Game, budget: dict[str, int], lst: BuildList = HOME,
         if list_ends_here(game):
             return None  # all of it on show: nothing to scroll to
         before = game.screen
+        (kind, amount), = budget.items() if len(budget) == 1 else ((None, 0),)
+        far = bool(kind and on_show and min(r.price for r in on_show) >= FAR_PRICE * max(amount, 1))
         game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
-        game.wait(0.8)
-        game.refresh()  # (looked at for rows on the next turn)
+        if pages is not None:
+            pages.append(2 if far else 1)
+        if far:
+            log.debug("Upgrades: the page costs %s+ (budget %s): swiping a page past unread",
+                      f"{min(r.price for r in on_show):,}", f"{amount:,}")
+            game.wait(0.3)
+            game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
+        settle_list(game)  # (looked at for rows on the next turn)
         if list_still(before, game.screen):
             return None  # the list's end
+        if far:
+            _back_to_dearer(game, kind, amount, lst, x, y)
     return None
 
 
+@_swiping
+def dearest_affordable(game: Game, kind: str, amount: int, lst: BuildList = HOME,
+                       skip: set[tuple] | None = None, pages: list[int] | None = None) -> Row | None:
+    """In a tab sorted Cost Min: the dearest row ``amount`` of ``kind``
+    covers, passing over the rows in ``skip``, read from the cheap end down
+    to the first row it doesn't cover (dearer, or drawn red: more than
+    there is). The row ``first_affordable`` finds sorted Cost Max, reached
+    from the other end: fewer pages when little of the list can be paid
+    for. Brought on screen; ``None`` if there's none. ``pages`` (a list)
+    gets the swipes it took added to it."""
+    w, h = game.size
+    x, y = w - LIST_SWIPE_X, h - LIST_SWIPE_FROM_BOTTOM
+    game.refresh()
+
+    def too_dear(m, row) -> bool:
+        if row is not None:
+            return row.price > amount
+        return price_affordable(game.screen, m) is False  # red; a white one not read is just passed
+
+    # Left further down (after an upgrade there's less to spend): back up
+    # while even the top row is too dear.
+    for _ in range(MAX_SORTED_SCROLLS):
+        on_show = priced(game, (kind,), lst)
+        if not on_show or not too_dear(*on_show[0]):
+            break
+        before = game.screen
+        game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
+        settle_list(game)
+        if list_still(before, game.screen):
+            return None  # the top: even the cheapest is too dear
+    best = None
+    for _ in range(MAX_SORTED_SCROLLS):
+        boundary = False
+        for m, row in priced(game, (kind,), lst):
+            if too_dear(m, row):
+                boundary = True
+                break
+            if row is not None and not passed_over(row, skip):
+                best = row  # cheapest first: the last one before the boundary is the dearest
+        if boundary or list_ends_here(game):
+            break
+        before = game.screen
+        game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
+        if pages is not None:
+            pages.append(1)
+        settle_list(game)
+        if list_still(before, game.screen):
+            break
+    if best is None:
+        # Everything from here down to the boundary was passed over, but the
+        # list may have been left part way down (by the row tried before):
+        # the cheaper rows above, dearest (lowest) first, up to the top.
+        for _ in range(MAX_SORTED_SCROLLS):
+            before = game.screen
+            game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
+            settle_list(game)
+            if list_still(before, game.screen):
+                return None  # the top: nothing above
+            for m, row in reversed(priced(game, (kind,), lst)):
+                if row is not None and not too_dear(m, row) and not passed_over(row, skip):
+                    log.debug("Upgrades: the rows below passed over; the dearest above is %s", f"{row.price:,}")
+                    return _clear_of_top(game, row, kind, lst, x, y)
+        return None
+    # It may be on the page before (the boundary at the top of this one).
+    for back in range(2):
+        for r in rows(game, (kind,), lst):
+            if r.price == best.price and same_look(r.look, best.look):
+                return _clear_of_top(game, r, kind, lst, x, y)
+        if back:
+            break
+        game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
+        settle_list(game)
+    return None
+
+
+# A row's price this near the list's top: the row is half under the list's
+# title, where a tap misses it (40,000 at y 82 did; at y 92, didn't).
+ROW_CLEAR = 30
+
+
+def _clear_of_top(game: Game, row: Row, kind: str, lst: BuildList, x: int, y: int) -> Row:
+    """``row``, brought down from under the list's title if it's there:
+    the list moved half a page down and the row found again (by its price;
+    a half-hidden row's name doesn't look like its whole one, so the look
+    only picks between rows of that price)."""
+    if row.y >= LIST_TOP + ROW_CLEAR:
+        return row
+    game.swipe(x, y - LIST_PAGE // 2, x, y, duration_ms=SLOW_SWIPE_MS)
+    settle_list(game)
+    same = [r for r in rows(game, (kind,), lst) if r.price == row.price]
+    if not same:
+        return row
+    log.debug("Upgrades: the row (%s) was under the list's title: brought down to y %d",
+              f"{row.price:,}", same[0].y)
+    return next((r for r in same if same_look(r.look, row.look)), same[0])
+
+
+def _back_to_dearer(game: Game, kind: str, amount: int, lst: BuildList, x: int, y: int) -> None:
+    """After a page swiped past unread: back up a page at a time while the
+    first row on show is one ``amount`` covers (dearer ones it covers may
+    have been passed)."""
+    for _ in range(3):
+        on_show = priced(game, (kind,), lst)
+        if not on_show:
+            return  # nothing to tell by: left as is
+        m, row = on_show[0]
+        if (row.price > amount) if row is not None else price_affordable(game.screen, m) is not True:
+            return  # dearer on top (a red price can't be paid either): the rows it covers are below
+        log.debug("Upgrades: swiped too far (a row %s covers on top); backing up a page", f"{amount:,}")
+        before = game.screen
+        game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
+        settle_list(game)
+        if list_still(before, game.screen):
+            return  # the top
+
+
+@_swiping
 def picked_rows(game: Game, budget: dict[str, int], lst: BuildList, picks: tuple[str, ...],
-                skip: set[tuple[str, int]] | None = None,
+                skip: set[tuple] | None = None,
                 which: str = "buildings") -> list[tuple[int, Row, str]] | None:
     """In a tab sorted Cost Max, look the list through, top to bottom, for
     the rows ``budget`` covers whose name is one of ``picks`` (see
@@ -571,7 +805,7 @@ def picked_rows(game: Game, budget: dict[str, int], lst: BuildList, picks: tuple
     game.refresh()
     for _ in range(MAX_SORTED_SCROLLS):
         found = [r for r in rows(game, tuple(budget), lst)
-                 if r.price <= budget[r.kind] and (r.kind, r.price) not in (skip or ())]
+                 if r.price <= budget[r.kind] and not passed_over(r, skip)]
         if found:
             named = row_names.names(game, found, lst, which)
             if named is None:
@@ -587,8 +821,7 @@ def picked_rows(game: Game, budget: dict[str, int], lst: BuildList, picks: tuple
             break
         before = game.screen
         game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
-        game.wait(0.8)
-        game.refresh()
+        settle_list(game)
         if list_still(before, game.screen):
             break
     return out
@@ -620,8 +853,7 @@ def find_row(game: Game, kind: str, price: int, name: str, lst: BuildList = HOME
                 game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
             else:
                 game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
-            game.wait(0.8)
-            game.refresh()
+            settle_list(game)
             if list_still(before, game.screen):
                 break
     return None
@@ -643,6 +875,7 @@ def upgradable_names(game: Game, lst: BuildList = HOME, which: str = "buildings"
         to_top(game)  # (as the upgrades after it expect: a list from its top)
 
 
+@_swiping
 def to_top(game: Game) -> None:
     """Scroll the open list up to its top, wherever it was."""
     w, h = game.size
@@ -651,12 +884,12 @@ def to_top(game: Game) -> None:
     for _ in range(MAX_SORTED_SCROLLS):
         before = game.screen
         game.swipe(x, y - LIST_PAGE, x, y, duration_ms=SLOW_SWIPE_MS)
-        game.wait(0.8)
-        game.refresh()
+        settle_list(game)
         if list_still(before, game.screen):
             return
 
 
+@_swiping
 def _names_to_the_end(game: Game, lst: BuildList, which: str) -> set[str] | None:
     from farmbot.tasks import row_names
 
@@ -682,8 +915,7 @@ def _names_to_the_end(game: Game, lst: BuildList, which: str) -> set[str] | None
             return seen
         before = game.screen
         game.swipe(x, y, x, y - LIST_PAGE, duration_ms=SLOW_SWIPE_MS)
-        game.wait(0.8)
-        game.refresh()
+        settle_list(game)
         if list_still(before, game.screen):
             return seen
     return None
@@ -708,9 +940,14 @@ def top_row_affordable(game: Game, kinds: tuple[str, ...], lst: BuildList = HOME
              if not any(WALL_ROW_BAND[0] <= y - m.y <= WALL_ROW_BAND[1] for y in walls)]
     if not icons:
         return None
-    m = min(icons, key=lambda i: i.y)
+    return price_affordable(game.screen, min(icons, key=lambda i: i.y))
+
+
+def price_affordable(screen: np.ndarray, m) -> bool | None:
+    """Whether the price beside cost icon ``m`` is drawn white (can be paid)
+    or red (can't); ``None`` if it can't be told."""
     x0, y0 = m.x - round(PRICE_LEFT * m.h), m.y - m.h // 2 - 2
-    area = cv2.cvtColor(game.screen[max(y0, 0):y0 + m.h + 4, max(x0, 0):x0 + round(PRICE_WIDTH * m.h)],
+    area = cv2.cvtColor(screen[max(y0, 0):y0 + m.h + 4, max(x0, 0):x0 + round(PRICE_WIDTH * m.h)],
                         cv2.COLOR_BGR2HSV)
     (hue_low, hue_high), sat, val = RED_PRICE
     red = int(np.count_nonzero(((area[..., 0] <= hue_low) | (area[..., 0] >= hue_high))
@@ -723,11 +960,27 @@ def top_row_affordable(game: Game, kinds: tuple[str, ...], lst: BuildList = HOME
     return None
 
 
-def green_confirm(game: Game):
+# Sizes the upgrade window's Confirm is looked for at when the window is
+# open but it isn't seen: a display at another density than the pictures'
+# draws the game's windows bigger or smaller than its HUD says.
+CONFIRM_SIZES = (0.8, 0.87, 0.94, 1.08, 1.15, 1.22, 1.29)
+CONFIRM_PICTURE_H = 20  # px tall the Confirm picture is: the green looked at goes by it
+
+
+def green_confirm(game: Game, any_size: bool = False):
     """The upgrade window's Confirm that pays in resources: green. (The grey
-    one next to it spends a Hammer magic item: never pressed.)"""
-    for m in game.find_all(T.UPGRADE_CONFIRM):
-        hsv = _median_hsv(game.screen, m.x - 60, m.y + 20, m.x + 60, m.y + 45)
+    one next to it spends a Hammer magic item: never pressed.) ``any_size``:
+    looked for at CONFIRM_SIZES too (slow: only once the window is open)."""
+    found = game.find_all(T.UPGRADE_CONFIRM)
+    if not found and any_size:
+        found = game.find_any_size(T.UPGRADE_CONFIRM, CONFIRM_SIZES)
+        if found:
+            log.info("Upgrades: the upgrade window's Confirm is drawn at %.2fx its picture's size",
+                     found[0].h / CONFIRM_PICTURE_H)
+    for m in found:
+        k = m.h / CONFIRM_PICTURE_H  # the green under the word, at the button's size
+        hsv = _median_hsv(game.screen, m.x - round(60 * k), m.y + round(20 * k), m.x + round(60 * k),
+                          m.y + round(45 * k))
         if (hsv and GREEN_HUE[0] <= hsv[0] <= GREEN_HUE[1] and hsv[1] >= GREEN_SATURATION
                 and hsv[2] >= GREEN_VALUE):
             return m
@@ -736,21 +989,22 @@ def green_confirm(game: Game):
 
 def pay_button(game: Game, kind: str) -> tuple[int, int] | None:
     """A builder base upgrade window's price button, if it pays in ``kind``
-    (gold or elixir): the biggest wide bright green area, with that
-    resource's icon in it."""
+    (gold or elixir): a wide bright green area, a button's height, with
+    that resource's icon in it. (Not just the biggest: a stat bar filled
+    green, as a Mine's "Effect tile range", can be bigger than the button.)"""
+    if kind not in PAY_ICON:
+        return None
     hsv = cv2.cvtColor(game.screen, cv2.COLOR_BGR2HSV)
     count, _, stats, centres = cv2.connectedComponentsWithStats(cv2.inRange(hsv, *PAY_GREEN))
-    best = None
+    found = []
     for i in range(1, count):
         x, y, w, h, area = (int(v) for v in stats[i])
-        if w >= PAY_SIZE[0] and area >= PAY_SIZE[1] and w >= 2 * h and (best is None or area > best[0]):
-            best = (area, x, y, w, h, centres[i])
-    if best is None or kind not in PAY_ICON:
-        return None
-    _, x, y, w, h, (cx, cy) = best
-    if np.count_nonzero(cv2.inRange(hsv[y:y + h, x:x + w], *PAY_ICON[kind])) < PAY_ICON_PIXELS:
-        return None
-    return round(cx), round(cy)
+        if w >= PAY_SIZE[0] and area >= PAY_SIZE[1] and w >= 2 * h and h >= PAY_HEIGHT:
+            found.append((area, x, y, w, h, centres[i]))
+    for _, x, y, w, h, (cx, cy) in sorted(found, key=lambda f: -f[0]):
+        if np.count_nonzero(cv2.inRange(hsv[y:y + h, x:x + w], *PAY_ICON[kind])) >= PAY_ICON_PIXELS:
+            return round(cx), round(cy)
+    return None
 
 
 GEM_SCALES = (0.5, 0.6, 0.7, 0.85, 1.0, 1.2)  # gem icons in windows are drawn at many sizes
@@ -825,7 +1079,9 @@ def upgrade_row(game: Game, row: Row, lst: BuildList = HOME) -> str:
     locked = False
     for _ in range(2):  # a tap just after the filter menu closes can be missed: once more if nothing opened
         game.tap(w - ROW_TAP_FROM_RIGHT, row.y - round(ROW_TAP_ABOVE * row.h))
-        deadline = game.clock() + CONFIRM_TIMEOUT
+        # The camera pans to the building before its window opens: across
+        # the builder base's map (two bases) that can take a while.
+        deadline = game.clock() + (BB_CONFIRM_TIMEOUT if lst.builder_base else CONFIRM_TIMEOUT)
         while confirm is None and game.clock() < deadline:
             game.wait(0.5)
             game.refresh()
@@ -839,7 +1095,12 @@ def upgrade_row(game: Game, row: Row, lst: BuildList = HOME) -> str:
             else:
                 m = green_confirm(game)
                 confirm = (m.x, m.y) if m else None
-        if locked or confirm is not None or any(over_list(m, list_y, w) for m in game.find_all(T.CLOSE)):
+        opened = any(over_list(m, list_y, w) for m in game.find_all(T.CLOSE))
+        if opened and confirm is None and not locked and not lst.builder_base:
+            # A window opened with no Confirm seen: it may be drawn at another size.
+            m = green_confirm(game, any_size=True)
+            confirm = (m.x, m.y) if m else None
+        if locked or confirm is not None or opened:
             break  # a window opened (to pay, or saying why not)
     if confirm is not None and asks_for_gems(game, confirm[1]):
         # Some events make upgrades and research cost gems too: never paid.
@@ -852,6 +1113,12 @@ def upgrade_row(game: Game, row: Row, lst: BuildList = HOME) -> str:
         log.info("Upgrades: that upgrade is locked until other buildings are built; on to the next")
     else:
         log.info("Upgrades: no upgrade window for that row (busy?)")
+        if lst.builder_base and game.screen is not None:
+            hsv = cv2.cvtColor(game.screen, cv2.COLOR_BGR2HSV)
+            count, _, stats, _ = cv2.connectedComponentsWithStats(cv2.inRange(hsv, *PAY_GREEN))
+            wide = sorted((tuple(int(v) for v in s) for s in stats[1:] if s[2] >= PAY_SIZE[0] // 2),
+                          key=lambda s: -s[4])[:2]
+            log.debug("Upgrades: the row's %s, %s at y %d; green areas %s", row.kind, f"{row.price:,}", row.y, wide)
     # Pets keep their window open (with a gem "Finish Now" where Confirm
     # was); a busy laboratory offers its Goblin Researcher for gems.
     close_windows(game, list_y)
@@ -971,6 +1238,23 @@ def free_builders(game: Game) -> int | None:
         # counter only, the number beside the face.
         free = _read_free(game, at(BUILDERS_ALONE), lead=True)
     return free
+
+
+def free_lab(game: Game) -> int | None:
+    """The laboratory's free count, from its counter above the Build button
+    beside the builders' ("0/1": busy). None if it can't be read."""
+    if not game.has(T.BUILD):
+        return None
+    game.refresh()
+    build = game.find(T.BUILD)
+    if build is None:
+        return None
+    if "lab" in goblins(game, build):
+        return 0
+    h = build.h
+    x, y, width, height = LAB
+    return _read_free(game, Rect(build.x + round(x * h), build.y + round(y * h), round(width * h),
+                                 round(height * h)))
 
 
 def goblins(game: Game, build: Match | None = None) -> set[str]:

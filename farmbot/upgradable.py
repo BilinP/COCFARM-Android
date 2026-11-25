@@ -133,6 +133,41 @@ def left_to_start(path: str | Path | None, village: townhall.Village | None, whi
     return {n for n in names if n not in under_way or under_way[n][0] < under_way[n][1]}
 
 
+def item_levels(village: townhall.Village | None, which: str, choices: tuple[str, ...]) -> dict[str, int]:
+    """The level each of ``choices`` is at, by the export (``which``:
+    "research" or "equipment"); those it doesn't hold (not unlocked, or no
+    export) are left out."""
+    if village is None:
+        return {}
+    table = gamedata.EQUIPMENT if which == "equipment" else _NAMES[which]
+    wanted = set(choices)
+    out: dict[str, int] = {}
+    for i, name in table.items():
+        if name in wanted and i in village.levels:
+            out[name] = max(village.levels[i], out.get(name, 0))
+    return out
+
+
+def owned_equipment(village: townhall.Village | None, by_hero: dict[str, tuple[str, ...]]) -> set[str] | None:
+    """The pieces the player has, of ``by_hero`` (hero -> its pieces), by
+    the export; None with no export (anything may be). The export lists
+    every Common piece the Blacksmith has unlocked, the hero had or not, and
+    every Epic piece at level 1 whether it's been got or not (an account
+    with none of them lists all): a piece counts once its hero is had, and
+    an Epic one once it's above level 1."""
+    if village is None:
+        return None
+    heroes = {name for i, name in gamedata.HEROES.items() if i in village.levels}
+    levels = item_levels(village, "equipment", tuple(n for names in by_hero.values() for n in names))
+    return {n for hero, names in by_hero.items() if hero in heroes for n in names
+            if n in levels and (n not in gamedata.EQUIPMENT_EPIC or levels[n] > 1)}
+
+
+def maxed_equipment(levels: dict[str, int]) -> set[str]:
+    """The pieces at their rarity's last level (``levels``: :func:`item_levels`)."""
+    return {name for name, level in levels.items() if level >= gamedata.equipment_max(name)}
+
+
 def time_left(seconds: float) -> str:
     """3d 18h, 5h 20m, 12m."""
     m = max(int(seconds // 60), 1)

@@ -38,6 +38,8 @@ CASTLES = [Castle(*row) for row in (
     (12, 50, 3, 2, 16),
     (13, 55, 3, 2, 16),
     (14, 55, 4, 2, 16),
+    # Town Hall 19 (16 Nov 2026): 60 troops; its spells, siege and cap as level 14's until seen.
+    (15, 60, 4, 2, 16),
 )]
 
 

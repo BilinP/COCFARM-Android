@@ -309,12 +309,34 @@ def apply_settings(install: Install, instance: Instance, values: dict[str, int],
     log.warning("Setting up BlueStacks: %s (restarts BlueStacks)", ", ".join(f"{k}={v}" for k, v in values.items()))
     if running():
         stop(sleep, running)
-    conf = install.data_dir / "bluestacks.conf"
-    data = conf.read_bytes()
-    newline = b"\r\n" if b"\r\n" in data else b"\n"
     wanted: dict[str, int] = dict(values)
     if "fb_width" in wanted:
         wanted["custom_resolution_selected"] = 1
+    left = wanted
+    for _ in range(2):
+        _write_conf(install, instance, left)
+        # BlueStacks' other programs (its multi-instance manager) write the
+        # file too: read back a moment later, what was put back written again.
+        sleep(1)
+        left = _not_kept(install, instance, wanted)
+        if not left:
+            return
+        log.info("BlueStacks didn't keep %s; writing them again", ", ".join(f"{k}={v}" for k, v in left.items()))
+    log.warning("BlueStacks kept its old %s: the game may be drawn at a size COCFARM's pictures don't match. "
+                "Close BlueStacks' Multi-Instance Manager, or set them by hand in its settings",
+                ", ".join(left))
+
+
+def _not_kept(install: Install, instance: Instance, wanted: dict[str, int]) -> dict[str, int]:
+    """The ``wanted`` settings bluestacks.conf doesn't have (now)."""
+    own, shared = read_instance(install, instance), read_global(install)
+    return {k: v for k, v in wanted.items() if (shared if k.startswith("bst.") else own).get(k) != str(v)}
+
+
+def _write_conf(install: Install, instance: Instance, wanted: dict[str, int]) -> None:
+    conf = install.data_dir / "bluestacks.conf"
+    data = conf.read_bytes()
+    newline = b"\r\n" if b"\r\n" in data else b"\n"
     for key, value in wanted.items():
         # (a whole "bst." key is every instance's: WANTED_GLOBAL)
         name = (key if key.startswith("bst.") else f"bst.instance.{instance.name}.{key}").encode()

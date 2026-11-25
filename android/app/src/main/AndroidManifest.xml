@@ -13,6 +13,11 @@
     <!-- Android 11+ only lets an app see (and open) the apps it names here. -->
     <queries>
         <package android:name="com.supercell.clashofclans" />
+        <!-- The home screen app: the game crashed or closed when it's in front. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application

@@ -7,10 +7,10 @@ import logging
 import threading
 from collections import Counter
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
-from farmbot import (accounts, diag, history, human, imagefile, instances, language, screens, starbonus, townhall,
+from farmbot import (accounts, diag, display, history, human, imagefile, instances, language, screens, starbonus, townhall,
                      upgradable, wakeup)
 from farmbot.timings import Timings
 from farmbot.notify import Notifier
@@ -18,7 +18,7 @@ from farmbot.config import Config, search_minimums_for, unreachable_minimums, un
 from farmbot.device import DeviceError, GameNotInstalled, GaveUp
 from farmbot.game import Game, Stopped, T
 from farmbot.history import AttackRecord
-from farmbot.tasks import attack, browse, builder, capital, clan, export, ranked, search, snacks, super_troops, upgrade, village, war
+from farmbot.tasks import attack, browse, builder, capital, clan, clan_games, export, ranked, search, snacks, super_troops, upgrade, village, war
 from farmbot.tasks.search import Loot
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ EXTRA_NAMES = {"_collect": "collecting", "_loot_cart": "the loot cart", "_graves
                "_snacks": "snacks and potions",
                "_treasury": "the Clan Castle treasury",
                "_clan_visit": "the clan (donations, requests)", "_capital": "Clan Capital raids",
+               "_clan_games": "the Clan Games",
+               "_request_troops": "troop requests", "_donate": "donations",
+               "_clan_check": "the clan check", "_close_chat": "closing the clan chat",
                "_upgrades": "upgrades", "builder": "the Builder Base", "_browse": "looking around the game",
                "ranked_attacks": "ranked battles", "war_attacks": "clan war attacks"}
 ERROR_SCREENS_KEPT = 200  # newest failed-round screens kept; older ones are deleted
@@ -52,6 +55,7 @@ TREASURY_FULL_RETRY = timedelta(hours=1)  # with the storages full, or nothing c
 STORAGE_RECHECK = 3600.0  # seconds: a storage that looks full is measured again before spending, at most this often
 IDLE_WAIT = 60.0  # seconds between village rounds when not attacking
 WAKE_REREAD = timedelta(minutes=30)  # Close between upgrades: village data this old is read again (at most this often)
+GAMES_QUIET = 5  # battles fought on for a challenge with no note after them: the board is looked at
 STAR_BONUS_WAIT = 4.0  # seconds, after an attack, for the Star Bonus window to open over the village
 STARTUP_TIMEOUT = 90  # seconds to wait for the home village after starting the game
 UPDATE_LOOK = 10.0  # seconds of an unknown screen while loading before its words are read (the update window)
@@ -59,6 +63,13 @@ UPDATE_LOOK = 10.0  # seconds of an unknown screen while loading before its word
 # started then is closed again: start it once Android has been up this long.
 BOOT_SETTLE = 20.0
 START_TRIES = 3  # starts of the game, if it closes while loading
+RECENTRE = True  # TEMPORARY: put the village back in the middle before map jobs (see Bot._centred)
+RECENTRE_RETIRE = 10  # rounds in a row the village came back centred by itself: then no longer looked at
+SETTLED_READ_WAIT = 10.0  # s at most for the resources to settle after the Star Bonus is claimed
+SETTLED_READ_GAP = 1.5  # s between those readings
+REFOCUS_SETTLE = 3.0  # s for the game to come back from the background
+PINCH_REOPENS = 3  # reopenings of the game for a pinch that moved the view, at most this many...
+PINCH_REOPEN_WINDOW = 3600.0  # ...in this many seconds: the emulator itself then needs a restart
 BLOCKED_WAIT = 180  # seconds the game stays closed after "Unable to attack Village!", at least...
 BLOCKED_WAIT_MAX = 300  # ...and at most (a different wait each time)
 
@@ -180,6 +191,7 @@ class Bot:
         self._extra_fails: Counter = Counter()  # extras' failed rounds in a row, by name
         self._extra_paused: dict[str, datetime] = {}  # extras left alone until then
         self._since_cart = 0  # builder battles since the elixir cart was last emptied
+        self._builder_attacks = 0  # builder battles this session (of ``attacks``)
         self._bb_collected_at: float | None = None  # when the builder collectors were last emptied (game.clock)
         self._since_home_collect: int | None = None  # home village rounds since the collectors were emptied
         self._cart_due: int | None = None  # battles between cart visits, picked at random
@@ -195,12 +207,28 @@ class Bot:
         self._builder_walls_known: dict = {}
         self._treasury_after: datetime | None = None  # when to look at the Clan Castle's treasury again
         self._capital_after: datetime | None = None  # when to look for Clan Capital raids again
+        self._games_after: datetime | None = None  # when to look at the Clan Games board again
+        self._games_memory = clan_games.Memory()  # challenges told apart, and the army's units
+        self._games_choose = False  # a challenge was going at the last look: "Choose" means it's over
+        self._games_going: tuple[str, str | None] | None = None  # the challenge going: its name and kind
+        self._games_save = None  # keeps the Clan Games memory (set at a look: its file and the games' end)
+        self._games_goal_said = False  # told the score reached its goal
+        self._games_kept = False  # what's known of the games was loaded from beside the profile
+        self._games_quiet = 0  # battles fought on since the last look, with no note of the challenge after them
         self._ranked_after: datetime | None = None  # ...and for ranked attacks
         self._war_after: datetime | None = None  # ...and at the clan war
         # Upgrades, last before a battle, leave what they upgraded selected
         # (the battle drops it); if no battle came, it's dropped next round.
         self._left_selected = False
         self._left_zoomed_in = False  # the same: the battle's view needs zooming out
+        # The home village as the game centres it when it loads (zoomed out):
+        # a view moved off it since (the game pans to a Hero Journey challenge
+        # after a battle, or an emulator's pinch slid it) is dragged back.
+        self._home_view = None
+        self._home_fresh = False  # the game just loaded: the next zoomed-out village is the centred one
+        self._centre_due = False  # this round's village not looked at yet (looked at once, by the first job needing it)
+        self._zoom_due = False  # back from a battle the village isn't zoomed out: done by the first job needing it
+        self._centred_in_a_row = 0  # rounds the village came back centred by itself (RECENTRE_RETIRE: no more looks)
         self._warned_minimums: dict[str, int] = {}  # loot minimums no base meets, once logged
         self._break_due: int | None = None  # attacks between breaks, picked at random
         # The human-like habits that span rounds (farmbot/human.py):
@@ -252,6 +280,9 @@ class Bot:
             self._storages_checked = {}
             self._bb_collected_at = self._since_home_collect = None
             self._in_clan = self._next_request = self._treasury_after = self._capital_after = self._ranked_after = self._war_after = None
+            self._games_after, self._games_memory, self._games_choose = None, clan_games.Memory(), False
+            self._games_going, self._games_quiet, self._games_kept = None, 0, False
+            self._games_save = None  # (the other account's file)
             self._walls_known, self._builder_walls_known = {}, {}
             self._upgrade_quiet = 0
             self.village, self._said_locked = None, set()
@@ -458,6 +489,7 @@ class Bot:
                 shown = getattr(device, "game_shown", None)  # phones: the screenshots prove it's in front
                 if shown:
                     shown()
+                self._home_view, self._home_fresh = None, True
                 return
             log.info("The game closed while loading; starting it again")
 
@@ -569,6 +601,95 @@ class Bot:
         self._closed_for = None
         self._fresh_at = self.game.clock()  # rested
 
+    def _mend_pinch(self) -> None:
+        """A zoom-out moved the map over instead of zooming (the emulator's
+        pinch stopped getting through: LDPlayer's two-finger touch, which
+        its ctrl+scroll zoom uses too). Reopening the game brings it back."""
+        if not self.game.pinch_pans:
+            return
+        self.game.pinch_pans = False
+        if self._refocus_mends_pinch():
+            return
+        now = self.game.clock()
+        recent = [t for t in getattr(self, "_pinch_reopens", []) if now - t < PINCH_REOPEN_WINDOW]
+        if len(recent) >= PINCH_REOPENS:
+            log.warning("Zooming out still moves the view after reopening the game %d times: restart the emulator "
+                        "to bring its two-finger touch back (the view is dragged back after each zoom-out meanwhile)",
+                        len(recent))
+            self._pinch_reopens = recent
+            return
+        self._pinch_reopens = recent + [now]
+        log.warning("Zooming out stopped working (the view moved instead): reopening the game")
+        self.status("Reopening the game (zooming out stopped working)")
+        self.game.device.stop_app(self.config.device.package)
+        self.game.wait(3)
+        self.ensure_game_running()
+        self._left_selected = self._left_zoomed_in = False  # (the game opens afresh)
+        screens.settle(self.game)
+
+    def _refocus_mends_pinch(self) -> bool:
+        """The quick mend first: the game sent to the background and brought
+        back (it forgets the touch it thought was held), then one zoom-out to
+        see that it zooms again. False if the device can't, or the pinch still
+        only drags the map (the game is reopened then)."""
+        refocus = getattr(self.game.device, "refocus_app", None)
+        if refocus is None:
+            return False
+        log.info("Zooming out isn't working: putting the game in the background and back")
+        self.status("Bringing the game back (zooming out stopped working)")
+        try:
+            refocus(self.config.device.package)
+        except Exception as exc:  # noqa: BLE001 (the reopen below is the way out)
+            log.info("Couldn't put the game in the background and back (%s)", exc)
+            return False
+        self.game.wait(REFOCUS_SETTLE)
+        if screens.settle(self.game) is not screens.Screen.HOME:
+            return False
+        self.game.zoom_out(force=True)
+        if self.game.pinch_pans:
+            self.game.pinch_pans = False
+            log.info("Zooming out still moves the view: reopening the game")
+            return False
+        log.info("Zooming out works again")
+        return True
+
+    def _centred(self, zoom: bool = False) -> None:
+        """TEMPORARY (the game's November 2026 update): back from a battle,
+        the village no longer comes back centred. Before a job that taps
+        the map (collecting, the loot cart, the treasury, gravestones, the
+        boat), put the zoomed-out village back where the game showed it
+        when it loaded: once a round, and only in a round that has such a
+        job. The first zoomed-out village after a load is kept as the
+        centred one (with the game already open when the bot started, the
+        first one seen is all there is). Once the game has come back
+        centred RECENTRE_RETIRE rounds in a row (fixed in an update), it
+        isn't looked at again; RECENTRE off: never. The village is zoomed
+        out first, once a round (back from a battle it's zoomed in a
+        little); ``zoom``: zoomed out again (the boat: the view may be as
+        the last job left it)."""
+        if zoom or self._zoom_due:
+            self._zoom_due = False
+            self.game.zoom_out()
+            self._left_zoomed_in = False
+            self._mend_pinch()  # (the pinch only dragged the map: mended before the job taps it)
+            if self._home_fresh or self.game.zoom_reference is None:
+                # The village all the way out, as the game loaded it: a later
+                # zoom-out leaving it well bigger didn't zoom (see Game._pinch_ignored).
+                self.game.zoom_reference = self.game.refresh().copy()
+        if not (RECENTRE and self._centre_due) or self._centred_in_a_row >= RECENTRE_RETIRE:
+            return
+        self._centre_due = False
+        screen = self.game.refresh()
+        if self._home_view is None or self._home_fresh:
+            self._home_view, self._home_fresh = screen.copy(), False
+            return
+        if self.game.recentre(self._home_view) is not None:
+            self._centred_in_a_row = 0
+            return
+        self._centred_in_a_row += 1
+        if self._centred_in_a_row >= RECENTRE_RETIRE:
+            log.info("The village has come back centred %d rounds in a row: no longer checked", RECENTRE_RETIRE)
+
     def restart_game(self) -> None:
         log.warning("Restarting the game after a failed round")
         self.game.device.stop_app(self.config.device.package)
@@ -611,6 +732,32 @@ class Bot:
             log.info("Couldn't close the game: %s", stop)
         self._rest(MAINTENANCE_LOOK)
         self.checkpoint()
+
+    def _check_display(self) -> None:
+        """The display Android uses put back to the standard (an emulator
+        the bot sets up), or warned about (manual): another size or density
+        draws the game's windows at sizes its pictures don't match. The
+        game, if running, is closed to start again at the right one."""
+        from farmbot.config import EMULATORS
+
+        emulator = self.config.device.mode in EMULATORS
+        try:
+            wrong = display.check(self.game.device, fix=emulator)
+        except Exception as exc:  # noqa: BLE001 - a check that fails isn't a reason not to play
+            log.warning("Couldn't check the display: %s", diag.failure(exc))
+            return
+        if not wrong:
+            return
+        if emulator:
+            log.warning("The emulator's display was off: %s. Closing the game to start it at the right one",
+                        "; ".join(wrong))
+            self.game.device.stop_app(self.config.device.package)
+            self.game.screen = None
+        else:
+            std = display.standard
+            log.warning("This device's display isn't the one COCFARM's pictures were made on: %s. "
+                        "Buttons may be missed; set it to %dx%d at %d DPI", "; ".join(wrong),
+                        std.WIDTH, std.HEIGHT, std.DPI)
 
     def _log_device(self) -> None:
         """The game's version and the device's display, once a run: what a
@@ -655,6 +802,7 @@ class Bot:
                            "emulator. It carries on by itself once the game is back.", "on_emulator_restart", "warn")
         self.game.device = self._reopen_device()
         self.game.screen = None
+        self._check_display()
         self.ensure_game_running()
 
     def read_resources(self, shift: int = 0) -> Loot | None:
@@ -667,6 +815,22 @@ class Bot:
             if self._on_resources:
                 self._on_resources(loot)
         return loot
+
+    def _settled_resources(self) -> Loot | None:
+        """The resources once the Star Bonus claimed has flown into the
+        storages: claiming it slides the Treasury's own bars over the
+        resource bars for a few seconds (read then, a battle "gained"
+        millions less than nothing). Read until two readings agree."""
+        last = None
+        deadline = self.game.clock() + SETTLED_READ_WAIT
+        while True:
+            self.game.wait(SETTLED_READ_GAP, exact=True)
+            loot = self.read_resources()
+            if loot is not None and loot == last:
+                return loot
+            if self.game.clock() >= deadline:
+                return None  # (the next round's reading settles the attack)
+            last = loot
 
     def read_storage_max(self, village: str = "home", again: bool = False) -> None:
         """What the ``village``'s storages hold, if not read yet today or one
@@ -742,6 +906,13 @@ class Bot:
         loot = loot or self.read_resources()
         return set() if loot is None else search.full_by_amount(loot, maxes)
 
+    def _nearly_full(self) -> set[str]:
+        """The home storages full or close to it (for the Clan Games' loot
+        challenges): read now; none if their sizes aren't known."""
+        maxes = self._storage_sizes("home")
+        loot = self.read_resources() if maxes else None
+        return set() if loot is None else clan_games.nearly_full(loot, maxes)
+
     def _storage_sizes(self, village: str = "home") -> dict[str, int]:
         """The storage sizes known, less a dark elixir storage the account
         can't have yet (a size copied over with another farm's settings)."""
@@ -802,10 +973,13 @@ class Bot:
         else:
             self.game.deselect()
         self._left_selected = False
-        # The village comes back from battles zoomed in a little, and the
-        # next battle's view starts from the village's zoom.
-        self.game.zoom_out()
-        self._left_zoomed_in = False
+        # The village comes back from battles zoomed in a little: zoomed out
+        # (and centred) only before a job that taps the map (see _centred).
+        # A round without one leaves it be: the battle zooms out by itself.
+        self._zoom_due = True
+        self._centre_due = True  # (looked at by the first job that taps the map: see _centred)
+        if self._home_fresh:
+            self._centred()  # the village as the game just loaded it: kept as the centred one
         if self._pending:
             # Before collecting or training, which would blur the gain.
             self._settle_attack(self.read_resources())
@@ -819,8 +993,11 @@ class Bot:
         self._extra(self._treasury)  # (after the others: their order stays as it was)
         self._extra(self._snacks)
         self.checkpoint()
-        for job in human.order(self.game.rng, [self._clan_visit, self._capital], self.game.uses("chore_order")):
-            self._extra(job)
+        for job in human.order(self.game.rng, [self._clan_visit, self._capital, self._clan_games],
+                               self.game.uses("chore_order")):
+            # (The clan visit's steps are extras of their own: one failing,
+            # the game crashing even, doesn't pause the others.)
+            job() if job == self._clan_visit else self._extra(job)
         self._extra(self._browse)
         self._extra(self._upgrades)
 
@@ -983,6 +1160,7 @@ class Bot:
                     log.info("Collectors: leaving the %s ones (storage full)", " and ".join(sorted(full & set(kinds))))
                     kinds = tuple(k for k in kinds if k not in full)
                 if kinds:
+                    self._centred()
                     village.collect_resources(self.game, kinds)
                 self._since_home_collect = 0
                 # ("Village jobs in a new order": not every N rounds on the dot.)
@@ -1029,7 +1207,9 @@ class Bot:
                 # It keeps what's in it until it's collected.
                 log.info("Loot cart: left for later (the storages are full)")
                 return
-            village.collect_loot_cart(self.game)
+            if self._shows(T.LOOT_CART):
+                self._centred()
+                village.collect_loot_cart(self.game)
 
     def _treasury(self) -> None:
         if not self.config.bot.collect_treasury:
@@ -1048,12 +1228,25 @@ class Bot:
             log.info("Treasury: left for later (the storages are full)")
             self._treasury_after = now + TREASURY_FULL_RETRY
             return
+        self._centred()
         done = village.collect_treasury(self.game)
         self._treasury_after = now + (TREASURY_EVERY if done else TREASURY_FULL_RETRY)
 
     def _gravestones(self) -> None:
-        if self.config.bot.clear_gravestones:
+        if self.config.bot.clear_gravestones and self._shows(T.GRAVESTONE):
+            self._centred()
             village.clear_gravestones(self.game)
+
+    def _shows(self, name: str) -> bool:
+        """``name`` (the loot cart's label, a gravestone) shows in the
+        village as it is: looked for before zooming out and centring it
+        for the job, so a round with nothing there leaves the view be.
+        Already zoomed out this round (collecting did), or no picture to
+        look for: the job looks for itself."""
+        if not self._zoom_due or not self.game.has(name):
+            return True
+        self.game.refresh()
+        return self.game.find(name, threshold=village.COLLECTOR_THRESHOLD) is not None
 
     def _clan_visit(self) -> None:
         cfg = self.config
@@ -1062,24 +1255,50 @@ class Bot:
         # One visit to the clan chat: the membership check, donations and the
         # request all run in it, and it's closed once at the end.
         if (cfg.clan.donate or cfg.clan.request_troops) and self._in_clan is None:
-            self._in_clan = clan.in_clan(self.game, close=False)
-            if self._in_clan is False:
-                log.info("Not in a clan: skipping troop requests and donations (join one in the game)")
+            self._extra(self._clan_check)
         clan_ok = self._in_clan is not False
         self.checkpoint()
-        if cfg.clan.donate and clan_ok:
-            self.status("Donating")
-            clan.donate(self.game, cfg.clan, close=False)
+        # The request first: it's on a timer, and donating can take a while.
+        # Each is an extra of its own, so donations failing don't pause it.
         if cfg.clan.request_troops and clan_ok:
-            now = self.game.clock()
-            if self._next_request is None or now >= self._next_request:
-                self.status("Requesting troops")
-                _, wait = clan.request_troops(self.game, cfg.clan, close=False)
-                # Wait out the game's cooldown (read off the button), or the
-                # configured interval when it couldn't be read.
-                self._next_request = now + (wait + 30 if wait else cfg.clan.request_every_minutes * 60)
+            self._extra(self._request_troops)
+        if cfg.clan.donate and clan_ok:
+            self._extra(self._donate)
         if cfg.clan.donate or cfg.clan.request_troops:
-            clan.close_chat(self.game)
+            self._extra(self._close_chat)
+
+    def _clan_check(self) -> None:
+        self._in_clan = clan.in_clan(self.game, close=False)
+        if self._in_clan is False:
+            log.info("Not in a clan: skipping troop requests and donations (join one in the game)")
+
+    def _close_chat(self) -> None:
+        clan.close_chat(self.game)
+
+    def _request_troops(self) -> None:
+        army = self.config.clan.empty_castle
+        # A little early through the chat: a cooldown that short is waited out there.
+        early = 0 if army else clan.WAIT_OUT
+        if self._next_request is not None and self.game.clock() < self._next_request - early:
+            return
+        self.status("Requesting troops")
+        if army:
+            # From the army window: the Clan Castle emptied and the request sent in one
+            # trip, the chat not opened for it (its timer isn't read there).
+            if clan.request_from_army(self.game, self.config.clan) is False:
+                self._next_request = None  # still on cooldown: looked at again next round
+                return
+            wait = None
+        else:
+            _, wait = clan.request_troops(self.game, self.config.clan, close=False)
+        # Back when the game's cooldown (read off the button) may be over, or
+        # after the configured interval when it couldn't be read.
+        self._next_request = self.game.clock() + (clan.soonest(wait) if wait
+                                                  else self.config.clan.request_every_minutes * 60)
+
+    def _donate(self) -> None:
+        self.status("Donating")
+        clan.donate(self.game, self.config.clan, close=False)
 
     def _browse(self) -> None:
         """"Look around the game": every few rounds, something besides farming."""
@@ -1103,6 +1322,147 @@ class Bot:
         if self.config.capital.raid and not self._not_yet("clan", "Clan Capital raids"):
             self.raid_capital()
 
+    def _games_fighting(self) -> bool:
+        """A Clan Games challenge going that home battles are fought to their end for."""
+        cfg = self.config.clan_games
+        if not (cfg.enabled and cfg.fight_on and self._games_going) or self._games_going[1] not in clan_games.FIGHT_FOR:
+            return False
+        return clan_games.phase(self._now().astimezone(timezone.utc))[0] == "games"
+
+    def _games_building(self) -> bool:
+        """A Clan Games Builder Base challenge going: builder base battles
+        are fought for it (whatever the mode), until the board is due a look."""
+        cfg = self.config.clan_games
+        if not (cfg.enabled and self._games_going and self._games_going[1] == "builder"):
+            return False
+        if self._no_boat or "builder_base" in self.locked():
+            return False
+        if (self._games_after is None or self._now() >= self._games_after or self._games_quiet >= GAMES_QUIET
+                or self._games_stuck()):
+            return False  # (the look is made at home)
+        return clan_games.phase(self._now().astimezone(timezone.utc))[0] == "games"
+
+    def _loot_per_battle(self) -> dict[str, float]:
+        """The loot this session's home battles brought each, on average
+        (a few in at least): how fast a loot challenge goes."""
+        home = self.attacks - self._builder_attacks
+        if home < 3:
+            return {}
+        g = self.gained
+        return {k: v / home for k, v in (("gold", g.gold), ("elixir", g.elixir), ("dark", g.dark)) if v > 0}
+
+    def _games_stuck(self) -> bool:
+        """The challenge going made no progress in its last few battles: the
+        board is looked at, to trade it in ("Trash a stuck challenge after")."""
+        cfg = self.config.clan_games
+        stuck = clan_games.stuck_after(cfg)
+        return bool(cfg.enabled and cfg.trade_in and stuck and self._games_going
+                    and self._games_memory.idle >= stuck)
+
+    def _fight_for_games(self) -> bool:
+        """This home battle is fought to its end for the Clan Games challenge going."""
+        if not self._games_fighting():
+            return False
+        log.info("Clan Games: this battle is fought to its end for %r (%s)", self._games_going[0] or "the challenge",
+                 self._games_going[1])
+        return True
+
+    def _clan_games(self) -> None:
+        """Clan Games (beta): a challenge the farm can do while the games
+        run (looked at again once it may be over, or sooner when the caravan
+        says "Choose"), then the rewards once they're over."""
+        cfg = self.config.clan_games
+        if not cfg.enabled or self._not_yet("clan", "the Clan Games"):
+            return
+        now = self._now()
+        stage, ends = clan_games.phase(now.astimezone(timezone.utc))
+        if stage != "games":
+            self._games_going = None
+        if stage is None or (stage == "rewards" and not cfg.rewards):
+            return
+        ends = ends.astimezone(now.tzinfo) if now.tzinfo else ends.astimezone().replace(tzinfo=None)
+        # After a battle the village notes how far the challenge is ("Completed!": the board is looked at
+        # then, for its points). Fighting on with no note for a few battles, it's looked at anyway.
+        if self._games_after and now < self._games_after and not (
+                (self._games_fighting() or (self._games_going and self._games_going[1] == "builder"))
+                and self._games_quiet >= GAMES_QUIET) and not self._games_stuck():
+            # A challenge done (or run out) shows "Choose" over the caravan: the next one is taken now.
+            # (Not after a trade-in or a board with nothing to do: "Choose" shows then too.)
+            if stage != "games" or not self._games_choose or not (
+                    self.game.has(T.CG_CHOOSE) and self.game.find(T.CG_CHOOSE)):
+                return
+        self.status("Clan Games")
+        if stage == "games":
+            # (Builder Base challenges: sailed over for, in any mode)
+            builder_too = "builder_base" not in self.locked() and not self._no_boat
+            kept = clan_games.memory_path(self._village_path(self._account))
+            if not self._games_kept:  # (a restart: the challenges told before aren't opened again)
+                self._games_kept = True
+                self._games_memory = clan_games.Memory.load(kept, ends)
+            self._games_save = lambda: self._games_memory.save(kept, ends)  # (after each battle too)
+            try:
+                visit = clan_games.play(self.game, cfg, builder_too, self._games_memory, self._nearly_full(),
+                                        self._loot_per_battle())
+            finally:  # (kept even when stopped during the look)
+                self._games_memory.save(kept, ends)
+            self._games_after = min(now + timedelta(seconds=visit.wait), ends)
+            self._games_choose = visit.going or bool(visit.started)
+            if visit.capped and not self._games_goal_said:
+                self._games_goal_said = True
+                self.notifier.send("Clan Games", "Your Clan Games score reached its goal: no more challenges are "
+                                   "taken.", "", "good")
+            self._games_quiet = 0
+            self._games_going = (visit.name, visit.kind) if visit.going or visit.started else None
+            return
+        done = clan_games.collect_rewards(self.game)
+        self._games_after = ends if done is not None else now + timedelta(hours=3)
+        if done:
+            self.notifier.send("Clan Games", "Picked the Clan Games rewards: check them in the game.", "", "good")
+
+    def _games_note(self, village: str = "home") -> None:
+        """After a battle (in ``village``), the challenge going's note
+        (caught right after Return Home: it shows a few seconds): how far
+        it is, or "Completed!" (the board is looked at next round then: its
+        points only go in then). Its battles with no progress are counted
+        (a stuck challenge is traded in)."""
+        if not (self.config.clan_games.enabled and self._games_going):
+            return
+        name = self._games_going[0] or "the challenge"
+        part, self.game.games_note = getattr(self.game, "games_note", None), None
+        note = None if part is None else clan_games.note_says(part)
+        memory = self._games_memory
+        try:
+            self._note_battle(note, memory, name, village)
+        finally:  # (a restart keeps the count)
+            if getattr(self, "_games_save", None):
+                self._games_save()
+
+    def _note_battle(self, note, memory, name: str, village: str) -> None:
+        # (Its battles only: a home battle doesn't go on with a Builder Base challenge, nor the other way.)
+        its = (self._games_going[1] == "builder") == (village == "builder")
+        if note is None:
+            self._games_quiet += 1
+            if its:
+                memory.idle += 1
+                if self._games_stuck():
+                    log.info("Clan Games: %r made no progress in %d of its battles: the board is looked at",
+                             name, memory.idle)
+            return
+        self._games_quiet = 0
+        if isinstance(note, tuple) and memory.progress is not None and note[0] <= memory.progress:
+            memory.idle += its  # (a note, but no further)
+        else:
+            memory.idle = 0
+        if isinstance(note, tuple):
+            memory.progress = note[0]
+        if note == "done":
+            log.info("Clan Games: %r is completed: the board is opened for its points", name)
+            self._games_after = None
+        elif note:
+            log.info("Clan Games: %r: %d/%d done", name, *note)
+        else:
+            log.info("Clan Games: %r went on (its note didn't read)", name)
+
     def _upgrades(self) -> None:
         cfg = self.config
         self.game.ledger.begin("home", "upgrades")
@@ -1121,10 +1481,14 @@ class Bot:
             if full and self._recheck_storages("home"):
                 full = self.full_storages()  # bigger now (a storage built or upgraded): maybe not full
             full |= self._upgrade_amounts_reached()  # (or holding the amount set to start at)
-            if cfg.upgrade.wake_up:
+            if cfg.upgrade.wake_up or cfg.upgrade.pause_when_idle:
                 full = {"gold", "elixir", "dark"}  # tried with the loot held: what it covers starts
             if not full:
                 self._why_no_upgrades()
+                if cfg.upgrade.equipment:  # (ore: not from the storages, so looked at with none full too)
+                    self.status("Upgrading equipment")
+                    self.session["upgrades"] += upgrade.upgrade(self.game, cfg, self.read_resources, set(),
+                                                                locked=self.locked(), kinds=["equipment"])
             if full and self._upgrade_quiet and not cfg.upgrade.wake_up:
                 self._upgrade_quiet -= 1
                 log.info("Upgrades: nothing to start last time; looking again in %d round(s)", self._upgrade_quiet + 1)
@@ -1303,10 +1667,10 @@ class Bot:
         return self.village is not None and self.village is not before
 
     def _wake_on(self) -> bool:
-        """Upgrades → "Close COCFARM between upgrades" is on, with upgrades
-        on in either village."""
+        """Upgrades → "Close COCFARM between upgrades" or "Pause when there's
+        nothing left to upgrade" is on, with upgrades on in either village."""
         u = self.config.upgrade
-        return bool(u.wake_up and (u.enabled or self.config.builder.upgrade))
+        return bool((u.wake_up or u.pause_when_idle) and (u.enabled or self.config.builder.upgrade))
 
     def _home_slots_wanted(self) -> dict[str, bool]:
         """The home village's slots its upgrades use ("builders", "lab");
@@ -1436,7 +1800,8 @@ class Bot:
         except DeviceError as stop:
             log.info("Couldn't close the game: %s", stop)
         self._left_selected = self._left_zoomed_in = False  # (the game opens afresh)
-        if back - now >= wakeup.SOON and self._schedule_wake is not None and self._schedule_wake(back):
+        closes = self.config.upgrade.wake_up and self._schedule_wake is not None  # (else: paused, COCFARM open)
+        if back - now >= wakeup.SOON and closes and self._schedule_wake(back):
             self.left_until = back
             log.info("Close between upgrades: every builder and laboratory is busy: closing until %s",
                      f"{back:%a %H:%M}")
@@ -1445,11 +1810,15 @@ class Bot:
                                "on_stopped", "info")
             self.status(f"Closed until {back:%a %H:%M}: Windows opens COCFARM for the next upgrade")
             return True
-        if back - now >= wakeup.SOON:
+        if back - now >= wakeup.SOON and self.config.upgrade.wake_up:
             log.info("Close between upgrades: Windows wasn't set to open COCFARM: waiting with it open")
-        log.info("Close between upgrades: every builder and laboratory is busy: waiting until %s",
-                 f"{back:%a %H:%M}")
-        self.status(f"Every builder busy: the next upgrade at {back:%a %H:%M}")
+        log.info("Pause between upgrades: every builder and laboratory is busy (or has nothing left to start): "
+                 "not attacking until %s, when the next upgrade is done", f"{back:%a %H:%M}")
+        if not self.config.upgrade.wake_up:
+            self.notifier.send("Paused until the next upgrade", f"Every builder (and laboratory) is busy, so the "
+                               f"farm paused. It carries on at {back:%a %H:%M}, once the next upgrade is done.",
+                               "on_stopped", "info")
+        self.status(f"Every builder busy: paused until the next upgrade at {back:%a %H:%M}")
         self._rest(max((back - now).total_seconds(), 0))
         self.checkpoint()
         return True
@@ -1501,6 +1870,7 @@ class Bot:
         if not capital.raid_weekend(now) or (self._capital_after and now < self._capital_after):
             return
         self.checkpoint()
+        self._centred()
         self.status("Raiding the Clan Capital")
         self._capital_after = now + timedelta(hours=1)
         try:
@@ -1561,6 +1931,8 @@ class Bot:
         """The village being farmed: "home" or "builder" (mode "auto" starts
         at home and moves to the builder base once the storages are full)."""
         mode = self.config.bot.mode
+        if self._games_building():
+            return "builder"  # a Clan Games Builder Base challenge going
         village = (self.auto_village or self.config.bot.auto_first) if mode == "auto" else mode
         if self._wake_visit and mode != "home" and self._wake_on():
             village = self._wake_visit  # (Close between upgrades: to read the village data, or for loot)
@@ -1612,16 +1984,23 @@ class Bot:
             return False
         if self._cart_due is None:
             self._cart_due = self.game.rng.randint(bcfg.cart_every_min, bcfg.cart_every_max)
-        if self._since_cart < self._cart_due:
+        due = self._since_cart >= self._cart_due
+        if "elixir" in self.full_storages("builder"):
+            # Nowhere for it to go: left for when the storage has room (still due).
+            log.info("Elixir cart: left for later (the elixir storage is full)")
             return False
-        cart = builder.collect_elixir_cart(self.game)
+        # Between visits, only a full cart (its tag on red) is collected: it's filling no more.
+        cart = builder.collect_elixir_cart(self.game, full_only=not due)
+        if not due and not cart:
+            return False
         self._since_cart = 0
         self._cart_due = self.game.rng.randint(bcfg.cart_every_min, bcfg.cart_every_max)
         return cart
 
     def builder_cycle(self) -> bool:
         """One builder base battle (sailing over first if needed)."""
-        if screens.settle(self.game) is not screens.Screen.BUILDER:
+        where = screens.settle(self.game)
+        if where is not screens.Screen.BUILDER:
             if self.village is None and self.config.bot.read_village:
                 # Not known yet whether this account has the builder base (it opens at Town Hall 6):
                 # the village data says, before looking for a boat that may not be repaired yet.
@@ -1629,6 +2008,9 @@ class Bot:
                 if self.playing() != "builder":
                     return self.cycle()
             self.status("Sailing to the builder base")
+            if where is screens.Screen.HOME:
+                self._centre_due = True  # (the boat: wherever the village was left)
+                self._centred(zoom=True)
             try:
                 builder.go_to_builder_base(self.game)
             except builder.BuilderError as exc:
@@ -1651,10 +2033,13 @@ class Bot:
         self.checkpoint()
         # The Clock Tower and the elixir cart are looked for on the first base,
         # where the boat lands: before collecting takes the view to the second
-        # base. Nothing after needs the view put back (walls and upgrades go
-        # by the Build list, the battle by its button, the boat home finds
-        # its way to the first base), which saves dragging it back.
+        # base. Collecting comes back to the first base by the same drags
+        # (an upgrade tapped in the list would send the camera across the
+        # map); nothing after drags the view back to a picture of it (walls
+        # and upgrades go by the Build list, the battle by its button, the
+        # boat home finds its way to the first base).
         # Both on the first base ("Village jobs in a new order": either first).
+        builder.back_to_first_base(self.game)
         carted: list[bool] = []
         for job in human.order(self.game.rng, [self._clock_tower, lambda: carted.append(self._elixir_cart())],
                                self.game.uses("chore_order")):
@@ -1749,7 +2134,8 @@ class Bot:
             if wake and self._bb_go_home():
                 self._no_battle()
                 return False
-        if may_leave and set(wanted) <= self.full_storages("builder"):
+        # (A Clan Games Builder Base challenge going: its battles are fought, full or not.)
+        if may_leave and not self._games_building() and set(wanted) <= self.full_storages("builder"):
             self._village_full("builder")
             return False
         self.checkpoint()
@@ -1761,17 +2147,21 @@ class Bot:
         self.status("Attacking (builder base)")
         if (bcfg.use_hero or bcfg.hero_ability) and self._not_yet("builder_heroes", "the builder base hero"):
             bcfg = replace(bcfg, use_hero=False, hero_ability=False)
+        # (A Clan Games challenge's note: caught right after Return Home, and read once home.)
+        self.game.note_wanted, self.game.games_note = bool(self.config.clan_games.enabled and self._games_going), None
         result = builder.attack(self.game, bcfg,
                                 on_stage=lambda n: self.status(f"Attacking (builder base): base {n}"))
+        self._games_note("builder")
         seconds = self.game.clock() - started
         self._left_selected = False  # the battle dropped it
         self._since_cart += 1
+        self._builder_attacks += 1
         self.attacks += 1
         self.attacks_today += 1
         self._since_break += 1
         log.info("Builder attack #%d done (%d stage(s))", self.attacks, result.stages)
         village.clear_popups(self.game)  # the Star Bonus window
-        self.game.zoom_out()
+        self.game.zoom_out(quick=True)  # back at the first base, at the game's default zoom
         after = self.read_resources()
         gained = None
         if before and after:
@@ -1803,6 +2193,7 @@ class Bot:
         self._closed_for = None  # playing: whatever it was closed for is over
         self._tire()
         self.ensure_game_running()
+        self._mend_pinch()
         if self._check_account_first():
             return self.cycle()  # with that account's settings
         if self.playing() == "builder":
@@ -1817,6 +2208,10 @@ class Bot:
                 raise builder.BuilderError("couldn't sail back to the home village")
         self._upgrade_idle, self._round_walls = False, 0
         self.maintain_village()
+        if self._games_building():  # a Clan Games Builder Base challenge just started: its battles are there
+            self._no_battle()
+            return self.builder_cycle()
+        self._mend_pinch()  # (the village's zoom-out after the last battle is where it shows)
         if self._leave_for_upgrades():
             return False
         self._extra(self.war_attacks)  # before farming: the clan's war comes first
@@ -1870,14 +2265,20 @@ class Bot:
         wants = cfg.search
         if wants.min_dark and self._not_yet("dark", "the dark elixir minimum (no base offers any yet)"):
             wants = replace(wants, min_dark=0)
+        if cfg.attack.league_bonus and bonus is None:
+            # League bonus farming: the bonus is the loot, whatever the base holds; every base is attacked.
+            wants = replace(wants, min_gold=0, min_elixir=0, min_dark=0)
         target = search.search(self.game, wants, cfg.regions, self._base_seen, zoom_out=self._left_zoomed_in,
                                look=self.game.uses("look_at_bases"), near=self.game.uses("near_misses"))
         self._left_zoomed_in = False
         self.game.ledger.begin("home", "battle")
         self.status("Attacking")
         self._pending = AttackRecord(self._now(), target, before)
+        # (Its note is caught right after Return Home, and read once home.)
+        self.game.note_wanted, self.game.games_note = bool(self.config.clan_games.enabled and self._games_going), None
         self._pending.taken = attack.attack(self.game, cfg, target, room=self._room(before, wanted),
-                                            for_stars=bonus is not None)
+                                            for_stars=bonus is not None or self._fight_for_games(),
+                                            village=self.village)
         self._left_selected = False  # the battle dropped it
         self.attacks += 1
         self.attacks_today += 1
@@ -1885,7 +2286,8 @@ class Bot:
         log.info("Attack #%d done", self.attacks)
         # Read the gain as soon as we're home, so the last attack of a run
         # is logged with it too.
-        if self.game.wait_for(T.BATTLE, timeout=20, interval=1):
+        if self._home_after_battle():
+            self._games_note()  # (it shows for a few seconds only)
             # The Star Bonus window opens a moment after the village shows
             # (its button "Claim" since November 2026, "Okay" before).
             closes = [name for name in (T.STAR_BONUS_CLAIM, T.OKAY) if self.game.has(name)]
@@ -1893,12 +2295,28 @@ class Bot:
             while closes and not any(self.game.find(name) for name in closes) and self.game.clock() < deadline:
                 self.game.wait(1, exact=True)
                 self.game.refresh()
+            claimed = bool(closes) and any(self.game.find(name) for name in closes)
             village.clear_popups(self.game)
-            after = self.read_resources()
+            after = self._settled_resources() if claimed else self.read_resources()
             if after is not None:  # otherwise the next round's reading settles it
                 self._settle_attack(after)
         self.status(f"Attack {self.attacks} done")
         return True
+
+    def _home_after_battle(self, timeout: float = 20) -> bool:
+        """Until the village shows after a battle, opening any event chest
+        that comes up first (one can follow the result a moment after Return
+        Home). True once the village shows."""
+        deadline = self.game.clock() + timeout
+        while True:
+            self.game.refresh()
+            if self.game.find(T.BATTLE):
+                return True
+            if village.in_chest_room(self.game) and village.open_event_chests(self.game):
+                continue
+            if self.game.clock() >= deadline:
+                return False
+            self.game.wait(1, exact=True)
 
     def _save_error_screen(self) -> None:
         """Keep what the bot was looking at when a round failed, for debugging."""
@@ -1922,6 +2340,7 @@ class Bot:
         limit = self.config.bot.max_attacks
         self._session_start = self._now()
         language.warn_once(self.game.device)
+        self._check_display()
         self._log_device()
         try:
             while not limit or self.attacks < limit:
@@ -1952,6 +2371,15 @@ class Bot:
                         break
                 except Stopped:
                     raise
+                except search.GameRefreshed as exc:  # the game reloaded itself for new content: search again
+                    log.info("%s; searching again", exc)
+                    continue
+                except search.ConnectionLost as exc:  # Try Again tapped, the village back: search again
+                    self.errors += 1  # (offline for good, it still stops after MAX_CONSECUTIVE_ERRORS)
+                    if self.errors >= MAX_CONSECUTIVE_ERRORS:
+                        raise RoundsFailed(f"{self.errors} rounds in a row failed: {exc}") from exc
+                    log.warning("%s; searching again (%d in a row)", exc, self.errors)
+                    continue
                 except search.SearchBlocked as exc:  # a battle left midway: closing the game a while clears it
                     self._wait_out_blocked(exc)
                 except screens.MaintenanceBreak as exc:  # over in an hour or so: waited out

@@ -35,6 +35,7 @@ AD_PACKAGES = ("com.android.ld.appstore",)  # LDPlayer's store, whose "Top-Up vi
 CONSOLE_EXE = "ldconsole.exe"
 ADB_EXE = "adb.exe"
 DEFAULT_ROOTS = (Path("C:/LDPlayer"), Path("D:/LDPlayer"), Path("C:/Program Files/LDPlayer"))
+STOP_WAIT = 60  # seconds for an instance to close before its settings are written
 MEMORY_SIZES = (2048, 4096, 8192)  # MB: what ldconsole modify --memory accepts, from 2048 up
 
 Runner = Callable[[list[str]], str]
@@ -238,13 +239,34 @@ def describe_changes(inst: Instance, settings: dict, changes: dict[str, object])
 
 
 def set_up(install: Install, inst: Instance, changes: dict[str, object], run: Runner = _run,
-           sleep: Callable[[float], None] = time.sleep) -> None:
+           sleep: Callable[[float], None] = time.sleep, cfg: DeviceConfig | None = None) -> None:
     """Stop the instance if needed, then apply ``changes`` (from
-    :func:`setup_needed`). It is started again by :func:`open_device`."""
-    console, index = str(install.console), str(inst.index)
+    :func:`setup_needed`). It is started again by :func:`open_device`.
+    Read back after: what didn't take is written once more, then warned
+    about (a DPI LDPlayer didn't keep draws the game at another size)."""
     if inst.running:
         log.info("Closing %s to change its settings", install.name)
-        _quit(install, inst, run, sleep)
+        if not _quit(install, inst, run, sleep):
+            log.warning("%s (instance %d) didn't close; its settings may not take", install.name, inst.index + 1)
+    left = changes
+    for _ in range(2):
+        _write(install, inst, left, run)
+        now = next((i for i in instances(install, run) if i.index == inst.index), None)
+        if now is None:
+            return  # not listed: can't be read back
+        settings = read_settings(install, inst.index)
+        left = {k: v for k, v in setup_needed(now, settings, cfg or DeviceConfig()).items() if k in changes}
+        if not left:
+            return
+        log.info("%s didn't take: %s; writing them again", install.name, describe_changes(now, settings, left))
+        sleep(2)
+    log.warning("%s kept its old %s: the game may be drawn at a size COCFARM's pictures don't match. Set %s "
+                "by hand in its settings", install.name, ", ".join(k.lstrip("-") for k in left),
+                ", ".join(f"{k.lstrip('-')} {v}" for k, v in left.items()))
+
+
+def _write(install: Install, inst: Instance, changes: dict[str, object], run: Runner) -> None:
+    console, index = str(install.console), str(inst.index)
     flags = [arg for name, want in changes.items() if name.startswith("--") for arg in (name, str(want))]
     if flags:
         run([console, "modify", "--index", index, *flags])
@@ -256,14 +278,15 @@ def set_up(install: Install, inst: Instance, changes: dict[str, object], run: Ru
         path.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
 
 
-def _quit(install: Install, inst: Instance, run: Runner, sleep: Callable[[float], None]) -> None:
-    """Close an instance and wait (up to 30 s) until it has."""
+def _quit(install: Install, inst: Instance, run: Runner, sleep: Callable[[float], None]) -> bool:
+    """Close an instance and wait (up to STOP_WAIT s) until it has: whether it did."""
     run([str(install.console), "quit", "--index", str(inst.index)])
-    for _ in range(30):
+    for _ in range(STOP_WAIT):
         sleep(1)
         current = next((i for i in instances(install, run) if i.index == inst.index), None)
         if current is None or not current.running:
-            return
+            return True
+    return False
 
 
 def _in_box(path: Path, installs: list[Install]) -> bool:
@@ -614,7 +637,7 @@ def open_device(cfg: DeviceConfig, run: Runner = _run, sleep: Callable[[float], 
     changes = setup_needed(inst, settings, cfg)
     if changes:
         log.warning("Setting up %s: %s (restarts it)", install.name, describe_changes(inst, settings, changes))
-        set_up(install, inst, changes, run, sleep)
+        set_up(install, inst, changes, run, sleep, cfg)
         inst.running = False
     try:
         cleared = clear_port(install, inst, installs, run, sleep, owner_of)

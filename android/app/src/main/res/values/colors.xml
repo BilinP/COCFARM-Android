@@ -14,6 +14,7 @@
     <color name="cf_muted">#9AA6BF</color>
     <color name="cf_accent">#F5B83D</color>
     <color name="cf_on_accent">#2A1B00</color>
+    <color name="cf_accent_inverse">#8A5A00</color>  <!-- the gold on a light surface (a Snackbar's action) -->
     <color name="cf_accent_container">#4A3510</color>
     <color name="cf_on_accent_container">#FFE2A8</color>
     <color name="cf_info">#6FA8FF</color>

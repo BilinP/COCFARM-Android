@@ -95,7 +95,7 @@ SEARCH_BY_TOWN_HALL = {1: 1_000, 2: 5_000, 3: 10_000, 4: 30_000, 5: 60_000, 6: 1
 # Town Hall 15 and up. Bases there offer a median 1.4M gold+elixir; replaying 194
 # scouted (4.2 s a Next) puts the most loot an hour at 1.2M-1.5M each (900k: about 13% less).
 SEARCH_TOP = 1_200_000
-MAX_TOWN_HALL = 18
+MAX_TOWN_HALL = 19
 # The amounts before 1.5.3: minimums still at one of these were never typed
 # in, so they move to the new ones.
 _OLD_BY_TOWN_HALL = {1: 1_000, 2: 3_000, 3: 10_000, 4: 25_000, 5: 50_000, 6: 80_000, 7: 120_000,
@@ -211,7 +211,31 @@ class AttackConfig:
     # still unhurt after ability_max_wait seconds fire anyway.
     ability_health: float = 0.0
     ability_max_wait: float = 45.0
-    speed_up: bool = True  # press the 1x button (last minute of a battle) so it plays at 4x
+    # A hero walk opens the battle: "queen" (the Archer Queen, her Healers
+    # behind her) or "champion" (the Royal Champion) goes in alone first and
+    # walks round the base, clearing what she can; the army follows her in
+    # from that side once she falls, or after walk_time s at most. Once her
+    # health drops to walk_invisibility_health an Invisibility Spell goes on
+    # her, and another each time one wears off. "off": no walk.
+    hero_walk: str = "off"
+    walk_time: float = 60.0
+    walk_invisibility_health: float = 0.95  # (18 Nov: at 0.9, she lost half her health before the first took hold)
+    # The walker's Spirit Fox, by its level ("1-4", "5-9", "10"; "off": none):
+    # it hides her 3, 3.5 or 4 s from when she goes down, then every 6 s
+    # after; the spells fill those gaps, never its turns.
+    walk_fox: str = "off"
+    # With the Rocket Spear on the Royal Champion, her ability at once as she
+    # goes in, far from the defences (it throws at them from further than they
+    # reach her); off: it waits for her last stand.
+    walk_spear_early: bool = True
+    speed_up: bool = True  # press the 1x button (it shows from the start of a battle) so it plays at 4x
+    # League bonus farming: every base is attacked (no search minimums), the
+    # whole army goes down at once round the base (heroes' abilities at
+    # once, Earthquakes anywhere), and the battle is left as soon as the
+    # Overall Damage reaches league_bonus_damage: the league's loot bonus is
+    # paid in full from there, so the rest of the battle isn't worth waiting for.
+    league_bonus: bool = False
+    league_bonus_damage: float = 0.7
     # Earn the day's Star Bonus: while the strip above Battle still has stars to
     # light, home battles are fought for stars (never left early over loot; see
     # star_focus), then farming goes on as usual once all five are earned.
@@ -233,8 +257,22 @@ class AttackConfig:
     spell_placement: str = "together"
     spell_reach: float = 0.45
     # Which spells to cast: "bat" (Bat Spells only; needs
-    # templates/cards/bat_spell.png) or "all".
+    # templates/cards/bat_spell.png), "earthquake" (Bat Spells and Earthquake
+    # Spells; needs templates/cards/earthquake_spell.png too) or "all".
     spells: str = "bat"
+    # Earthquake Spells go quakes_per_spot at a time on one spot (4 open the
+    # walls there for the troops); more than that, the rest on another spot.
+    quakes_per_spot: int = 4
+    # Where the Earthquakes go: "path", first, before the troops, on the
+    # walls on their way in (outer walls, then the core's), the army going in
+    # behind them from that one side; "spots", after the troops, on the
+    # spells' spot and others round the middle.
+    quake_aim: str = "path"
+    # With quake_aim "path": before the main army, a funnel at each end of
+    # the way in clears the buildings outside it, so the army walks straight
+    # in: "troops" (two of the first troop card at each end), "heroes" (all
+    # but the Grand Warden, who stays with the army) or "off".
+    funnel: str = "off"
     # "together": the one spot, "middle" (the base centre) or "random" (a new
     # spot each battle, within the middle half of the base).
     spell_spot: str = "random"
@@ -377,6 +415,10 @@ class ClanConfig:
 
     request_troops: bool = False
     request_every_minutes: int = 10  # only when the cooldown on the button can't be read
+    # Before each request, the troops, spells and siege machine in the Clan
+    # Castle are removed (Battle → Edit Army): the request goes out again
+    # without attacking (for a clan's donated-and-received rules, or donors' XP).
+    empty_castle: bool = False
     donate: bool = False
     # Troops to give first, in this order (names from farmbot/units.py, e.g.
     # "Super Barbarian"); then, with donate_fill, the space left goes to the
@@ -432,6 +474,34 @@ class CapitalConfig:
     spells_near_drop: bool = True
     # Lightning on the buildings near the troops' drop when there are any (off: the most packed anywhere).
     lightning_near_drop: bool = False
+
+
+@dataclass
+class ClanGamesConfig:
+    """Clan Games (beta): a challenge the farm can do, then the rewards."""
+
+    enabled: bool = False
+    # The score to play up to: "4000" (the bonus reward tier: some stop
+    # there) or "10000" (the most a player can earn).
+    goal: str = "10000"
+    # With no challenge the farm can do on the board, one is started and
+    # trashed for a new one (it costs nothing but 10 minutes).
+    trade_in: bool = True
+    # After a challenge is done, one the farm can't do is traded in before
+    # the next is started (with trading in on), while the board runs low
+    # on ones it can do: it fills up with those otherwise. Each costs the
+    # 10 minutes after a trash.
+    clear_out: bool = True
+    # A challenge going that made no progress in this many of its battles
+    # (no note after them, and none on the board) is trashed for a new one
+    # (with trading in on). "0": never.
+    stuck_after: str = "3"
+    # While a challenge for stars or destroying buildings is going, home
+    # battles aren't ended early over loot (as for the Star Bonus).
+    fight_on: bool = True
+    # Once the games are over, a reward from each tier the clan unlocked:
+    # an item first, then gems, then the first one.
+    rewards: bool = True
 
 
 @dataclass
@@ -616,6 +686,12 @@ class UpgradeConfig:
     only: list[str] = field(default_factory=list)
     # Research only this (troops, spells, siege machines; first to last); empty: any.
     research_only: list[str] = field(default_factory=list)
+    # Hero equipment, at the Blacksmith with ore (Shiny, Glowy, Starry): no
+    # builder, done at once (``farmbot/tasks/equipment.py``). Its place in
+    # ``order`` is "equipment". Only these pieces (first to last); empty: any,
+    # those equipped first.
+    equipment: bool = False
+    equipment_only: list[str] = field(default_factory=list)
     # Buildings not built yet ("New" in the list) are built first, and new
     # walls (free) put down; the Town Hall is upgraded like any building
     # (when it can't be yet, the next upgrade instead).
@@ -629,6 +705,12 @@ class UpgradeConfig:
     # first is done (farming for the next upgrade's loot, then closing again):
     # ``farmbot/wakeup.py``. Each round tries the upgrades with the loot held.
     wake_up: bool = False
+    # The same rest without closing COCFARM (no scheduled task): once every
+    # builder and the laboratory the upgrades may use is busy, or nothing is
+    # left to start, attacking stops and the game is closed until the
+    # soonest upgrade under way is done, then farming carries on. Works with
+    # any emulator or a phone; needs the village data (bot.read_village).
+    pause_when_idle: bool = False
     # An idle Builder's Apprentice is put on the upgrade under way with the most time left (each round's
     # upgrades, after them; kept on it until it's done).
     apprentice: bool = True
@@ -642,7 +724,8 @@ class UpgradeConfig:
 WALL_RESOURCES = ("gold", "elixir", "both")
 UPGRADE_FIRST = ("defense", "resource", "army", "none")
 # "walls": where the walls take their turn (they have their own settings: walls.*, builder.walls*).
-UPGRADE_ORDER = ("pets", "hero", "research", "building", "walls")
+# "equipment": hero equipment (ore, at once). An older file without it gets it last.
+UPGRADE_ORDER = ("pets", "hero", "research", "equipment", "building", "walls")
 BUILDER_UPGRADE_ORDER = ("research", "hero", "building", "walls")
 MODES = ("home", "builder", "auto")  # auto: one village until its storages are full, then the other
 THEMES = ("auto", "light", "dark")
@@ -651,8 +734,12 @@ DROP_DISTANCES = ("close", "far")
 BUILDER_HEROES = ("any", "machine", "copter")
 SPELL_PLACEMENTS = ("together", "spread")
 TROOP_PLACEMENTS = ("spread", "loot")
-SPELL_CHOICES = ("bat", "all")
+SPELL_CHOICES = ("bat", "earthquake", "all")
 SPELL_SPOTS = ("middle", "random")
+HERO_WALKS = ("off", "queen", "champion")
+WALK_FOXES = {"off": 0.0, "1-4": 3.0, "5-9": 3.5, "10": 4.0}  # the Spirit Fox's level: s it hides her each time
+QUAKE_AIMS = ("path", "spots")
+FUNNELS = ("troops", "heroes", "off")
 STAR_FOCUS = ("side", "corner", "spread")
 WAR_TARGETS = ("mirror", "bottom", "gain")
 DISTRICT_ORDERS = ("destroyed", "stars")
@@ -682,6 +769,9 @@ class BuilderConfig:
     troop_abilities: bool = True
     ability_batch: int = 2  # troop abilities fired together
     ability_delay: float = 5.0  # seconds between batches
+    # Once the first base falls the game brings a second: played (on), or
+    # End Battle there (off: about a minute saved; its extra stars given up).
+    second_base: bool = True
     stage_delay: float = 2.0  # wait for the second base to settle before deploying
     speed_up: bool = True  # press the 1x button so the battle plays at 4x
     collect_resources: bool = True  # empty the builder base gold mines, elixir collectors and gem mine
@@ -798,6 +888,7 @@ class Config:
     redline: RedLineConfig = field(default_factory=RedLineConfig)
     clan: ClanConfig = field(default_factory=ClanConfig)
     capital: CapitalConfig = field(default_factory=CapitalConfig)
+    clan_games: ClanGamesConfig = field(default_factory=ClanGamesConfig)
     ranked: RankedConfig = field(default_factory=RankedConfig)
     war: WarConfig = field(default_factory=WarConfig)
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
@@ -847,6 +938,20 @@ class Config:
             raise ValueError(f"attack.spell_placement must be one of {SPELL_PLACEMENTS}")
         if self.attack.spells not in SPELL_CHOICES:
             raise ValueError(f"attack.spells must be one of {SPELL_CHOICES}")
+        if not 1 <= self.attack.quakes_per_spot <= 20:
+            raise ValueError("attack.quakes_per_spot must be from 1 to 20")
+        if self.attack.quake_aim not in QUAKE_AIMS:
+            raise ValueError(f"attack.quake_aim must be one of {QUAKE_AIMS}")
+        if self.attack.funnel not in FUNNELS:
+            raise ValueError(f"attack.funnel must be one of {FUNNELS}")
+        if self.attack.hero_walk not in HERO_WALKS:
+            raise ValueError(f"attack.hero_walk must be one of {HERO_WALKS}")
+        if not 5 <= self.attack.walk_time <= 120:
+            raise ValueError("attack.walk_time must be from 5 to 120 s")
+        if not 0.1 <= self.attack.walk_invisibility_health <= 0.95:
+            raise ValueError("attack.walk_invisibility_health must be from 0.1 to 0.95")
+        if self.attack.walk_fox not in WALK_FOXES:
+            raise ValueError(f"attack.walk_fox must be one of {tuple(WALK_FOXES)}")
         if self.attack.spell_spot not in SPELL_SPOTS:
             raise ValueError(f"attack.spell_spot must be one of {SPELL_SPOTS}")
         if self.attack.star_focus not in STAR_FOCUS:

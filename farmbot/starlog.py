@@ -87,7 +87,8 @@ def record(game, cfg: Config, mode: str, note: str = "") -> dict | None:
     battle: a file that can't be written is only logged."""
     try:
         line = row(game, mode, note)
-        log.info("Star battle (%s): %s star(s), %s%% damage, pushed from %s", mode, line["stars"] or "?",
+        log.info("Star battle (%s): %s star(s), %s%% damage, pushed from %s", mode,
+                 line["stars"] if line["stars"] != "" else "?",
                  line["damage"] if line["damage"] != "" else "?", line["push"])
         target = path(cfg)
         if target is None:

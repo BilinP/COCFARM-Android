@@ -36,9 +36,12 @@ class Picture:
 QUICK_EXIT = "Leaving battles without restarting the game"
 SNACKS = "Using snacks and potions"
 BAT_SPELLS = "Casting only Bat Spells"
+QUAKES = "Casting Earthquake Spells"
 WARDEN_SIDE = "Putting the Grand Warden with the most troops"
+HERO_WALK = "Queen and Champion walks"
 SUPER_TROOPS = "Activating super troops"
 CAPITAL = "Clan Capital raids"
+CLAN_GAMES = "Clan Games"
 STAR_PLANS = "War and ranked attacks planned by army and base"
 WAR = "Clan war attacks"
 APPRENTICE = "Putting the Builder's Apprentice to work"
@@ -53,9 +56,21 @@ PICTURES: list[Picture] = [
     Picture(T.NEXT, "Next", "Scouting a base, bottom right: the word \"Next\".", "Attacking", True),
     Picture(T.BAT_SPELL_CARD, "Bat Spell card", "Troop bar during a battle: the bats and bottle on the "
             "Bat Spell card (not its count or level).", BAT_SPELLS),
+    Picture(T.EARTHQUAKE_SPELL_CARD, "Earthquake Spell card", "Troop bar during a battle: the cracked ground "
+            "on the Earthquake Spell card (not its count or level).", QUAKES),
     Picture(T.WARDEN_CARD, "Grand Warden card", "Troop bar during a battle: the Grand Warden's face on his "
             "card: just his mouth and beard (not his level, the equipment icon in the corner or the green "
             "button).", WARDEN_SIDE),
+    Picture(T.QUEEN_CARD, "Archer Queen card", "Troop bar during a battle: the Archer Queen's face on her "
+            "card, eyes to chin (not her level or the pet in the corner).", HERO_WALK),
+    Picture(T.CHAMPION_CARD, "Royal Champion card", "Troop bar during a battle: the Royal Champion's face on "
+            "her card, eyes to chin (not her level or the pet in the corner).", HERO_WALK),
+    Picture(T.HEALER_CARD, "Healer card", "Troop bar during a battle: the Healer on her card: its lower half, "
+            "below the \"xN\" count (the count changes) and above the level.", HERO_WALK),
+    Picture(T.INVISIBILITY_SPELL_CARD, "Invisibility Spell card", "Troop bar during a battle: the bottle on the "
+            "Invisibility Spell card (not its count or level).", HERO_WALK),
+    Picture(T.ROCKET_SPEAR, "Rocket Spear", "During a battle, once the Royal Champion is down: the Rocket "
+            "Spear's picture over her card (the spear on its purple square, not the square's edge).", HERO_WALK),
     Picture(T.AIR_CARDS, "Air troop cards", "Troop bar during a battle: the picture of an air troop's card "
             "(Dragon, Electro Dragon, Balloon...): its lower half, below the \"xN\" count (the count changes) "
             "and above the level; one picture per troop. With an air army, war and ranked attacks go in "
@@ -144,6 +159,10 @@ PICTURES: list[Picture] = [
     Picture(T.BB_BUILDER_BOAT, "Boat home", "Builder base, top right: the boat's hull.", "Builder base"),
     Picture(T.BB_BATTLE, "Builder Battle", "Builder base, bottom left: the crossed axes.", "Builder base"),
     Picture(T.BB_FIND_NOW, "Find Now!", "Builder Start Attack window: the words \"Find Now!\".", "Builder base"),
+    Picture(T.BB_ATTACK_COOLDOWN, "Attack available in", "Builder Start Attack window after a battle left "
+            "early: the words \"Attack available\" over the timer where Find Now! goes.", "Builder base"),
+    Picture(T.BB_SEARCH_CANCEL, "Cancel (search)", "Builder base, \"Searching for opponents...\": the word "
+            "\"Cancel\" on the red button.", "Builder base"),
     Picture(T.CONFIRM, "Confirm", "A notice such as \"The Event has ended\": the word \"Confirm\" on its green "
             "button.", "Closing notices"),
     Picture(T.GEM, "Gem", "The home village's resource bar: the green gem icon beside your gem count.",
@@ -164,6 +183,9 @@ PICTURES: list[Picture] = [
             "battle was left without surrendering: the words \"Unable to attack\".", "Searching"),
     Picture(T.LOCKOUT_RETURN_HOME, "Return Home (Unable to attack)", "The same white screen: the words "
             "\"Return Home\" on the portrait button at its bottom left.", "Leaving the Unable to attack screen"),
+    Picture(T.SEARCHING, "Searching for opponents", "The white clouds after Find a Match while a base is looked "
+            "for: the words \"for opponents...\" under the magnifying glass.", "Telling a slow search from the "
+            "Unable to attack screen"),
     Picture(T.ATTACK_COOLDOWN, "Attack available in", "Battle → the battle menu while a battle left midway "
             "still runs: the words \"Attack available in:\" on the grey box where the Battle card's Find a "
             "Match would be.", "Waiting out a battle left midway"),
@@ -184,6 +206,8 @@ PICTURES: list[Picture] = [
             "\"Change Heroes\".", "Builder base"),
     Picture(T.SPEED, "1x speed (home)", "Home battle, last minute, right side: the green \"1x\" button.",
             "Battle speed"),
+    Picture(T.SPEED_ON, "4x speed (home)", "Home battle, right side: the same button once tapped, reading "
+            "\"4x\" (so it isn't tapped back to 1x).", "Battle speed"),
     Picture(T.BB_HERO_MACHINE, "Battle Machine card", "Builder battle, bottom left: the Battle Machine's hero card "
             "(below its health bar).", "Builder base"),
     Picture(T.BB_HERO_COPTER, "Battle Copter card", "Builder battle, bottom left: the Battle Copter's hero card "
@@ -285,6 +309,16 @@ PICTURES: list[Picture] = [
             "Donating", folder=True),
     Picture(T.REQUEST, "Request", "Clan chat, bottom (right of Challenge): the castle with a plus.", "Requesting troops"),
     Picture(T.REQUEST_SEND, "Send request", "Request window: the word \"Send\".", "Requesting troops"),
+    Picture(T.EDIT_ARMY, "Edit Army", "Battle menu, bottom left: the words \"Edit Army\" on the green button.",
+            "Emptying the Clan Castle"),
+    Picture(T.CASTLE_ROW, "Clan Castle row", "Edit Army window, the Clan Castle's row: its first small icon "
+            "(the castle with a troop), left of the troop count.", "Emptying the Clan Castle"),
+    Picture(T.CASTLE_TRASH, "Clan Castle bin", "Edit Army window, with troops in the Clan Castle: the bin at the "
+            "right end of the Clan Castle's row.", "Emptying the Clan Castle"),
+    Picture(T.CASTLE_REQUEST, "Army window Request", "Edit Army window, right of Add, while a request is free: the "
+            "castle with the \"+\" bubble on the green button.", "Emptying the Clan Castle"),
+    Picture(T.REMOVE_TROOPS, "Remove troops?", "After tapping that bin: the title \"Remove troops?\".",
+            "Emptying the Clan Castle"),
     Picture(T.CAPITAL_BADGE, "Raid badge", "Home village, over the capital airship: the sword on the red badge "
             "(raids left; a gold sword for the bonus raid).", CAPITAL, folder=True),
     Picture(T.CAPITAL_COLLAPSE, "Fold event buttons", "Home village, bottom: the \"<\" at the end of the event "
@@ -313,6 +347,30 @@ PICTURES: list[Picture] = [
             "(the count changes).",
             CAPITAL),
     Picture(T.CAPITAL_RESULT_MAP, "Raid result: Map", "Raid result screen: the word \"Map\".", CAPITAL),
+    Picture(T.CG_ICON, "Clan Games button", "Home village, bottom: the bearded builder among the event buttons.",
+            CLAN_GAMES),
+    Picture(T.CG_UNFOLD, "Unfold event buttons", "Home village, bottom (event buttons folded): the \">\" after "
+            "them.", CLAN_GAMES),
+    Picture(T.CG_CHOOSE, "Clan Games: Choose", "Home village, top left, over the Clan Games caravan while no "
+            "challenge is going: the word \"Choose\".", CLAN_GAMES),
+    Picture(T.CG_TITLE, "Clan Games sign", "Clan Games board, top left: the words \"Clan Games\".", CLAN_GAMES),
+    Picture(T.CG_CHALLENGES_TAB, "Challenges tab", "Clan Games board, top: the word \"Challenges\".", CLAN_GAMES),
+    Picture(T.CG_REWARDS_TAB, "Rewards tab", "Clan Games board, top: the word \"Rewards\" (the tab not picked).",
+            CLAN_GAMES),
+    Picture(T.CG_MEDAL, "Challenge medal", "Clan Games board: the silver medal after a challenge's points, in "
+            "colour.", CLAN_GAMES),
+    Picture(T.CG_GOING, "Challenge going", "Clan Games board, with a challenge going: the stopwatch at the top left "
+            "of its tile.", CLAN_GAMES),
+    Picture(T.CG_NOTE, "Challenge Progress note", "Home village, bottom right, for a few seconds after a battle "
+            "that helped the challenge going: the words \"Challenge Progress\".", CLAN_GAMES),
+    Picture(T.CG_START, "Challenge Start", "Clan Games board → a challenge: the word \"Start\" on the green "
+            "button.", CLAN_GAMES),
+    Picture(T.CG_TRASH, "Challenge Trash", "Clan Games board → the challenge going: \"Trash\" and the dynamite "
+            "on the red button.", CLAN_GAMES),
+    Picture(T.CG_TRASH_TITLE, "Trash Challenge?", "After Trash: the title \"Trash Challenge?\".", CLAN_GAMES),
+    Picture(T.CG_CLOSE, "Clan Games close", "Clan Games board, top right: the red X.", CLAN_GAMES),
+    Picture(T.CG_INFO, "Reward item", "Clan Games board, Rewards tab: the \"i\" on an item's reward; add one in "
+            "colour and one greyed.", CLAN_GAMES, folder=True),
     Picture(T.WAR_BUTTON, "War button", "Home village, left edge, during a war: the middle of the crossed swords "
             "(not the red badge or the timer).", WAR),
     Picture(T.WAR_RETURN_HOME, "War: Return Home", "War map, bottom left: the words \"Return Home\".", WAR),
@@ -333,6 +391,10 @@ PICTURES: list[Picture] = [
     Picture(T.WAR_SCOUT, "War Scout", "A tapped enemy base's panel: the word \"Scout\" on the green button.", WAR),
     Picture(T.TRY_AGAIN, "Try Again", "Connection lost popup: \"Try Again\".", "Recovering from disconnects"),
     Picture(T.RELOAD, "Reload", "\"Another device is connected\" popup: \"Reload\".", "Recovering from disconnects"),
+    Picture(T.NEW_CONTENT, "New Content", "The \"New Content\" window (the game updated while running, met "
+            "after Find a Match): its title.", "Refreshing the game for new content"),
+    Picture(T.NEW_CONTENT_REFRESH, "New Content: Refresh", "The word \"Refresh\" on the \"New Content\" "
+            "window's green button.", "Refreshing the game for new content"),
     Picture(T.LOGIN, "Not logged in", "The game's start screen with no account logged in: \"Log in with Supercell ID\".",
             "Stopping when the game isn't logged in"),
     Picture(T.RATE_TITLE, "Rate Clash of Clans", "The title of Google Play's \"Rate Clash of Clans\" dialog, "

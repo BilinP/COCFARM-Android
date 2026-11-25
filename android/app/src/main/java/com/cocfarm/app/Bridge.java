@@ -85,13 +85,19 @@ public final class Bridge {
         return touch().swipe(x1, y1, x2, y2, ms);
     }
 
-    public static boolean pinch() {
+    /** Zoom out on the game: the screen less the black bars round it (0 each with none). */
+    public static boolean pinch(int left, int top, int right, int bottom) {
         BotService service = bot();
-        return touch().pinch(service.width, service.height);
+        return touch().pinch(left, top, service.width - left - right, service.height - top - bottom);
     }
 
     public static boolean back() {
         return touch().back();
+    }
+
+    /** Android's home button: the game goes to the background, still running. */
+    public static boolean home() {
+        return touch().home();
     }
 
     /**
@@ -136,6 +142,73 @@ public final class Bridge {
         return touch().foregroundPackage();
     }
 
+    /** Screen pixels per sp: how big the phone draws its own text (its density and font size),
+     *  which sizes the dialogs it shows over the game. */
+    public static float textPixels() {
+        android.content.res.Resources resources = bot().getResources();
+        return resources.getDisplayMetrics().densityDpi / 160f * resources.getConfiguration().fontScale;
+    }
+
+    /** The phone's home screen app (its launcher), or "" if there's no telling. */
+    public static String homePackage() {
+        try {
+            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+            android.content.pm.ResolveInfo found = bot().getPackageManager()
+                    .resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+            return found == null || found.activityInfo == null ? "" : found.activityInfo.packageName;
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** The screen is off or locked: taps can't reach the game until it's unlocked. */
+    public static boolean screenLocked() {
+        Context context = BotService.instance != null ? BotService.instance : appContext;
+        if (context == null) {
+            return false;
+        }
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        return (power != null && !power.isInteractive()) || (keyguard != null && keyguard.isKeyguardLocked());
+    }
+
+    /**
+     * What the bot needs from the phone, checked once at the start, as "name=value" lines: the
+     * Android version, the screen, the accessibility service, screen capture, battery
+     * optimisation, notifications, the lock and the game. Read and logged by cocfarm_android.
+     */
+    public static String selfCheck(String pkg) {
+        Context context = BotService.instance != null ? BotService.instance : appContext;
+        StringBuilder out = new StringBuilder();
+        out.append("android=").append(android.os.Build.VERSION.RELEASE)
+                .append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n");
+        out.append("phone=").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL).append('\n');
+        out.append("accessibility=").append(TouchService.instance != null ? "on" : "off").append('\n');
+        out.append("capture=").append(BotService.instance != null && BotService.instance.width > 0 ? "on" : "off").append('\n');
+        if (context == null) {
+            return out.toString();
+        }
+        android.content.res.Configuration config = context.getResources().getConfiguration();
+        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        out.append("density=").append(metrics.densityDpi).append('\n');
+        out.append("font_scale=").append(config.fontScale).append('\n');
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        out.append("battery_optimised=").append(power != null
+                && !power.isIgnoringBatteryOptimizations(context.getPackageName()) ? "yes" : "no").append('\n');
+        android.app.NotificationManager notes = context.getSystemService(android.app.NotificationManager.class);
+        out.append("notifications=").append(notes != null && notes.areNotificationsEnabled() ? "on" : "off").append('\n');
+        out.append("locked=").append(screenLocked() ? "yes" : "no").append('\n');
+        String game = "missing";
+        try {
+            android.content.pm.PackageInfo info = context.getPackageManager().getPackageInfo(pkg, 0);
+            game = info.versionName == null ? "installed" : info.versionName;
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            // stays "missing"
+        }
+        out.append("game=").append(game).append('\n');
+        return out.toString();
+    }
+
     public static void startApp(String pkg) {
         Context context = bot();
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(pkg);
@@ -174,13 +247,13 @@ public final class Bridge {
         return Python.getInstance();
     }
 
-    /** Pause at the next safe point, or carry on. */
-    static void togglePause() {
+    /** Pause at the next safe point, or carry on. {@code from}: what was pressed, for the log. */
+    static void togglePause(String from) {
         BotService service = BotService.instance;
         if (service == null || stopping || !Python.isStarted()) {
             return;
         }
-        paused = Python.getInstance().getModule("cocfarm_android").callAttr("toggle_pause").toBoolean();
+        paused = Python.getInstance().getModule("cocfarm_android").callAttr("toggle_pause", from).toBoolean();
         if (!paused) {
             status("Carrying on");
         }
