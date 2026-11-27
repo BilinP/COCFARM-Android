@@ -18,6 +18,28 @@ from farmbot.update import STATE, _load, _save, parse_version
 KINDS = ["New", "Improved", "Fixed"]
 
 NOTES: dict[str, list[tuple[str, str, str]]] = {
+    "1.9.6": [
+        ("Fixed", "Clan war attacks on phones",
+         "War attacks now work on a phone: the war is found and opened, the base's panel and Confirm Attack are "
+         "answered, and each attack goes in with the siege machine and spells, as on the PC."),
+        ("Fixed", "The floating button no longer pauses the farm",
+         "It sits where the game puts its clan war button at first: it now steps aside while COCFARM looks for and "
+         "taps that button, so the tap no longer lands on it and pauses the farm."),
+        ("Fixed", "War results in the star log",
+         "A clan war battle's stars and damage are read off its result screen, which sits lower than a raid's; "
+         "they were logged as unknown."),
+        ("Fixed", "The treasury search on phones",
+         "While looking for the Clan Castle, numbers on the game's own buttons (the gem count, the war timer) are no "
+         "longer taken for it: a tap on them could open the gem shop."),
+        ("Fixed", "Walls, Treasury, Edit Army and more on phones",
+         "The Treasury button, the Wall row, Upgrade More, Add Wall, Edit Army, the loot cart's Collect and the event "
+         "chest's Continue are now seen at a phone's sizes, so these steps no longer stop there."),
+        ("Fixed", "A round no longer ends mid-attack",
+         "A deploy spot just past the top of the screen made Android refuse the tap and end the round; such spots "
+         "are now kept on the screen."),
+        ("Improved", "Several walls at once on phones",
+         "A slow look on a phone no longer cuts a wait short, so walls go up several at a time again."),
+    ],
     "1.9.5": [
         ("New", "League bonus farming",
          "Turn it on under Attacking → Ending the battle: every base is attacked, the whole army goes down at once "

@@ -125,6 +125,14 @@ class Letterbox:
         """What to add to a point on the game to tap it on the screen."""
         return self.box[0], self.box[1]
 
+    def place(self, x: int, y: int) -> tuple[int, int]:
+        """Point (x, y) on the game, on the screen, never left of or above the
+        game: Android refuses a gesture at a negative point, and that ended
+        a round mid-attack (a deploy point a few pixels past the top, on a
+        Galaxy A16, 25 Nov 2026)."""
+        left, top = self.offset
+        return max(int(x), 0) + left, max(int(y), 0) + top
+
     def update(self, image: np.ndarray) -> bool:
         """Look at a new screenshot; True when the bars in use changed."""
         self._shots += 1

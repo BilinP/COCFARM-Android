@@ -20,6 +20,7 @@ from farmbot.game import VIEW_STILL, Game, T, view_change
 from farmbot.geometry import Point, Rect, points_along
 from farmbot.tasks.search import Loot, loot_value, read_loot
 from farmbot.tasks.village import open_event_chests, pick_reward
+from farmbot.vision import Match
 
 log = logging.getLogger(__name__)
 
@@ -1216,7 +1217,7 @@ STAR_BATTLE = 240.0  # s a battle fought for stars may take: its 3 min, the 30 s
 
 def finish_battle(game: Game, cfg: Config, target: Loot | None = None,
                   room: dict[str, int] | None = None, for_stars: bool = False,
-                  league: bool = False) -> float | None:
+                  league: bool = False, war_map: bool = False) -> float | None:
     """Wait for the battle to end. End it early once the available loot has
     stopped dropping, or once ``end_at_loot_share`` of the ``target`` loot
     (what scouting reported) is taken, or once what's taken fills the
@@ -1226,7 +1227,8 @@ def finish_battle(game: Game, cfg: Config, target: Loot | None = None,
     destroyed, the troops gone, or the game's own clock), however the
     loot stands. ``league``: league bonus farming: it ends as soon as the
     Overall Damage reaches ``league_bonus_damage`` too, looked at often
-    (the battle plays at 4x)."""
+    (the battle plays at 4x). ``war_map``: a clan war battle (its result
+    screen sits lower)."""
     acfg = cfg.attack
     if for_stars:
         acfg = replace(acfg, end_when_no_loot=False, end_at_loot_share=0.0, end_when_full=False,
@@ -1331,7 +1333,7 @@ def finish_battle(game: Game, cfg: Config, target: Loot | None = None,
                              f"after the battle "
                              f"({game.scores(T.RETURN_HOME, T.END_BATTLE, T.SURRENDER_OK)}; UI scale "
                              f"{game.ui_scale or 1.0:.2f})")
-    read_result(game)
+    read_result(game, war=war_map)
     look_at_result(game)
     if not return_home(game):
         # Tapped, and still showing: the next round's popup check tries again.
@@ -1425,9 +1427,10 @@ def _gone(game: Game) -> bool:
 RESULT_READS = 6  # tries at a steady reading of the stars and damage (they count up)
 
 
-def read_result(game: Game) -> result.Result | None:
+def read_result(game: Game, war: bool = False) -> result.Result | None:
     """The battle's stars and Total damage off its result screen, once two
-    readings agree (kept in ``game.last_result``); None if not read."""
+    readings agree (kept in ``game.last_result``); None if not read.
+    ``war``: a clan war battle's result screen."""
     try:
         font = game.vision.font(T.LOOT_FONT)
     except Exception:  # noqa: BLE001 (no font: the stars alone)
@@ -1437,7 +1440,7 @@ def read_result(game: Game) -> result.Result | None:
         if attempt:
             game.wait(0.6, exact=True)
             game.refresh()
-        now = result.read(game.screen, font)
+        now = result.read(game.screen, font, result.WAR_DROP if war else 0)
         if now == last and (now is None or now.damage is not None):
             found = now
             break
@@ -1677,7 +1680,12 @@ def loot_front(game: Game, cfg: Config, edges: dict[str, list[Point]], target: L
     return LootFront(sides, stretches, found)
 
 
-CONFIRM = Rect(280, 250, 620, 410)  # the "Confirm Attack" question (war and ranked alike)
+def confirm_area(title: Match) -> Rect:
+    """Where the "Confirm Attack" question's own Attack! is, from its title
+    (war and ranked alike): below the title and about as far either side
+    as the title is wide, which leaves out the army window's Attack! behind
+    it on a wide phone screen."""
+    return Rect(title.x - title.w, title.y, 2 * title.w, round(1.3 * title.w))
 
 
 def into_battle(game: Game, timeout: float, who: str) -> bool:
@@ -1690,9 +1698,10 @@ def into_battle(game: Game, timeout: float, who: str) -> bool:
     while game.clock() < deadline:
         game.wait(1.0, exact=True)
         game.refresh()
-        if game.find(T.WAR_CONFIRM_TITLE):
+        title = game.find(T.WAR_CONFIRM_TITLE)
+        if title:
             # Only its own green Attack!: a tap beside the question closes it.
-            if game.click(T.WAR_CONFIRM_ATTACK, region=game.region(CONFIRM)):
+            if game.click(T.WAR_CONFIRM_ATTACK, region=confirm_area(title)):
                 log.debug("%s: confirmed the attack", who)
             continue
         if game.click(T.WAR_ARMY_ATTACK) or (game.has(T.ARMY_ATTACK) and game.click(T.ARMY_ATTACK)):
@@ -2076,7 +2085,7 @@ def attack(game: Game, cfg: Config, target: Loot | None = None, room: dict[str, 
         log.info("Activated %d hero ability(s)", len(placed))
     game.refresh()
     speed_up(game, cfg)  # everything is down: troops, spells, heroes and siege (and their abilities)
-    return finish_battle(game, cfg, target, room, for_stars, league)
+    return finish_battle(game, cfg, target, room, for_stars, league, war_map)
 
 
 ABILITY_CHECK = 0.5  # seconds between looks at the heroes' health

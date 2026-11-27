@@ -277,6 +277,14 @@ public final class Bridge {
         }
     }
 
+    /** COCFARM's floating button off the game (true) while the bot looks at what it covers, or back. */
+    public static void buttonAside(boolean away) {
+        TouchService touch = TouchService.instance;
+        if (touch != null && touch.button != null) {
+            touch.button.stepAside(away);
+        }
+    }
+
     /** Farming started or ended, or was paused: everything showing it follows. */
     static void changed() {
         tileChanged();

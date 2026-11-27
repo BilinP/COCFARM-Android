@@ -13,7 +13,7 @@ import numpy as np
 
 from farmbot import bubbles, imagefile, redact
 from farmbot.config import WallsConfig
-from farmbot.game import Game, T
+from farmbot.game import Game, T, looked_late
 from farmbot.geometry import Rect
 from farmbot.tasks.build_list import (LIST_BOTTOM_FROM_BOTTOM, LIST_PAGE, LIST_STEP, LIST_SWIPE_FROM_BOTTOM,
                                       LIST_SWIPE_X, LIST_TOP, MAX_SORTED_SCROLLS, SLOW_SWIPE_MS,
@@ -796,9 +796,10 @@ def _wait_for_any(game: Game, names: str | tuple[str, ...], timeout: float):
     names = [n for n in names if game.has(n)]
     deadline = game.clock() + timeout
     while True:
+        started = game.clock()
         game.refresh()
         match = next((m for n in names if (m := game.find(n)) is not None), None)
-        if match is not None or game.clock() >= deadline:
+        if match is not None or (game.clock() >= deadline and looked_late(started, deadline, timeout)):
             return match
         game.wait(0.5, exact=True)
 
@@ -869,6 +870,7 @@ def _confirm_walls(game: Game, timeout: float = 4) -> bool | None:
     okay = game.has(T.OKAY)
     deadline = game.clock() + timeout
     while True:
+        started = game.clock()
         game.refresh()
         confirm = green_confirm(game) if game.has(T.UPGRADE_CONFIRM) else None
         if confirm is None and okay:
@@ -880,7 +882,7 @@ def _confirm_walls(game: Game, timeout: float = 4) -> bool | None:
                 return None
             game.tap_match(confirm)
             return True
-        if game.clock() >= deadline:
+        if game.clock() >= deadline and looked_late(started, deadline, timeout):
             return False
         game.wait(0.5)
 
@@ -955,6 +957,35 @@ CASTLE_TAPS = ((0.2, 0.8), (1.0, 0.6), (0.2, 1.1), (-0.6, 0.8))  # (on a 20 px b
 LABEL_TAPS = ((0, 3.0), (0.5, 3.4))
 LABEL_LIKENESS = 0.55  # on the label's white letters (the sky or base behind them varies)
 MAX_SPOTS = 8  # labels tried at most (each storage that's full shows "Full!" too)
+# The game's own buttons round the village, in the pictures' space (the screen
+# scaled to the buttons, 780 high on a phone): (left, top, right, bottom), a
+# negative x or y counted from the right or bottom edge. White numbers on them
+# (the gem count, the Clan War timer) pass for a label at the phone's looser
+# likeness, and a tap there opens the gem shop, where the next spot's tap picks
+# a gem pack (Google Play's "Buy" sheet: Galaxy A16, 25 Nov 2026). No tap of the
+# castle search goes in them.
+HUD_AREAS = (
+    (0, 0, 175, None),          # left column: profile, builders, shield, Clan War, Battle
+    (0, 0, 300, 255),           # top left: name, Builder Base boat
+    (-330, 0, None, 290),       # top right: gold, elixir, dark, gems (its + opens the shop), shield
+    (-150, 0, None, None),      # right column: Shop, Free! offer, Build
+    (0, -100, 640, None),       # bottom left row: clan, events, news
+    (-400, -100, None, None),   # bottom right row: chests, forge
+)
+
+
+def in_hud(screen: np.ndarray, x: float, y: float) -> bool:
+    """Whether (x, y) on ``screen`` is on one of the game's own buttons
+    round the village (``HUD_AREAS``)."""
+    height, width = screen.shape[:2]
+    for left, top, right, bottom in HUD_AREAS:
+        x0 = left if left >= 0 else width + left
+        y0 = top if top >= 0 else height + top
+        x1 = width if right is None else right
+        y1 = height if bottom is None else bottom
+        if x0 <= x < x1 and y0 <= y < y1:
+            return True
+    return False
 # On a phone (UI scale 1.18-1.21, measured on 8 sizes) labels over buildings are
 # drawn 1.1 times the PC's pictures once the screen is scaled to the buttons: the
 # village is zoomed differently from the buttons there. Resized, the pictures
@@ -1015,9 +1046,24 @@ def _castle_spots(game: Game) -> list[tuple[float, float, float, tuple]]:
         if library.has(T.CASTLE_BADGE):
             spots += [(b.x + b.w / 2, b.y + b.h / 2, b.h, CASTLE_TAPS)
                       for _, b in redact.matches(screen, library, T.CASTLE_BADGE)[:1]]
+        spots = [(x, y, unit, taps) for x, y, unit, taps in spots
+                 if not any(in_hud(screen, x + dx * unit, y + dy * unit) for dx, dy in taps)]
         if spots:
             return spots
     return []
+
+
+def _village_showing(game: Game) -> bool:
+    """Whether the village is still on show, its Battle button in place (a
+    building picked by the last tap leaves it there): a window a tap opened
+    is closed once, and if the button still doesn't show, False: the next tap
+    could land in a shop."""
+    game.refresh()
+    if game.find(T.BATTLE) is not None:
+        return True
+    close_all_windows(game)
+    game.refresh()
+    return game.find(T.BATTLE) is not None
 
 
 def collect_treasury(game: Game) -> bool:
@@ -1034,6 +1080,9 @@ def collect_treasury(game: Game) -> bool:
         opened = False
         for x, y, unit, taps in spots:
             for dx, dy in taps:
+                if not _village_showing(game):
+                    log.info("Treasury: a tap by a label opened something other than the castle; stopped looking")
+                    return False
                 game.tap(round(x + dx * unit), round(y + dy * unit))
                 if game.click_when_visible(T.TREASURY, timeout=2):
                     opened = True

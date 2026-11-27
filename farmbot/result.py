@@ -28,6 +28,9 @@ DAMAGE = (390, 110, 475, 140)  # x0, y0, x1, y1 of the green "88%"
 # Measured: the stars are 1.26x on a phone's 2340 x 1080 screen (1690 x 780 once
 # scaled to the pictures), as big as the width alone would make them at 860.
 LAYOUT_HEIGHT = 619
+# A clan war's result screen has its stars and damage this much lower ("New Best"
+# over them, the war's rewards either side): measured on the PC's and a phone's.
+WAR_DROP = 36
 STANDARD_HEIGHT = 672
 
 
@@ -50,13 +53,14 @@ class Result:
     damage: int | None  # % (None: not read)
 
 
-def stars(screen: np.ndarray) -> int | None:
-    """Stars earned, or None if the three stars aren't plainly there."""
+def stars(screen: np.ndarray, drop: int = 0) -> int | None:
+    """Stars earned, or None if the three stars aren't plainly there.
+    ``drop``: how much lower they are (``WAR_DROP``), in the 860 layout."""
     s = _layout(screen)[0]
     value = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)[..., 2]
     count = 0
     for spot in STARS:
-        (x, y), h = _at(screen, *spot), max(2, round(STAR_HALF * s))
+        (x, y), h = _at(screen, spot[0], spot[1] + drop), max(2, round(STAR_HALF * s))
         level = float(value[y - h:y + h, x - h:x + h].mean())
         if level >= EARNED:
             count += 1
@@ -81,9 +85,9 @@ def split(mask: np.ndarray) -> list[np.ndarray]:
     return halves
 
 
-def damage(screen: np.ndarray, font: text.Font) -> int | None:
+def damage(screen: np.ndarray, font: text.Font, drop: int = 0) -> int | None:
     """The Total damage %, or None if it can't be read."""
-    (x0, y0), (x1, y1) = _at(screen, *DAMAGE[:2]), _at(screen, *DAMAGE[2:])
+    (x0, y0), (x1, y1) = _at(screen, DAMAGE[0], DAMAGE[1] + drop), _at(screen, DAMAGE[2], DAMAGE[3] + drop)
     hsv = cv2.cvtColor(screen[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
     green = cv2.inRange(hsv, *GREEN)
     white = np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
@@ -101,12 +105,13 @@ def damage(screen: np.ndarray, font: text.Font) -> int | None:
     return int(digits) if digits and int(digits) <= 100 else None
 
 
-def read(screen: np.ndarray, font: text.Font | None) -> Result | None:
-    """The stars and damage on a result ``screen``, or None (no stars there)."""
-    earned = stars(screen)
+def read(screen: np.ndarray, font: text.Font | None, drop: int = 0) -> Result | None:
+    """The stars and damage on a result ``screen``, or None (no stars there).
+    ``drop``: ``WAR_DROP`` for a clan war's result screen."""
+    earned = stars(screen, drop)
     if earned is None:
         return None
-    return Result(earned, damage(screen, font) if font is not None else None)
+    return Result(earned, damage(screen, font, drop) if font is not None else None)
 
 
 # During a battle, bottom right over the troop bar: "Overall Damage" and,

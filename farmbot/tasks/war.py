@@ -38,12 +38,18 @@ BADGE_RED = 0.25  # of it red at least (0.6 with the badge, next to none without
 BUTTON_LOOKS = 8  # looks for the war button before it's taken as not there
 OPEN_WAIT = 12  # s for the war to open
 BATTLE_WAIT = 45  # s from Attack! to the base on screen
-CONFIRM = attack.CONFIRM  # the "Confirm Attack" question
 STEP_WAIT = 1.0  # s for the panel to show the next base
 MOST_BASES = 50  # a war has at most 50 a side
 MOST_ATTACKS = 2
 
-# A base's panel (opened by a tap on the base), at the bottom of the war map.
+# A base's panel (opened by a tap on the base), at the bottom of the war map. Its parts
+# are given as on the PC's screen (1177x920), where the Scout button is SCOUT_W wide: on
+# another screen (a phone's, wider and lower) they're placed from the screen's middle
+# and bottom, the panel's size to the PC's that of the Scout button (see ``place``). (Not
+# from where the Scout button is: on a base nobody attacked yet it sits further left.)
+PC_SCREEN = (1177, 920)
+SCOUT_W = 82
+SCOUT_AREA = Rect(0, -400, 0, 0)  # the screen's bottom, where the panel's Scout button is looked for
 PANEL = Rect(315, 600, 560, 310)
 TITLE = Rect(330, 640, 520, 34)  # "18. name"
 PREVIOUS, NEXT = (265, 770), (910, 770)  # its arrows: one base up, one base down
@@ -153,22 +159,34 @@ def open_war(game: Game) -> bool | None:
     game.refresh()
     if on_war_screen(game):
         return True
-    button = war_button(game)
-    if button is None:
-        return False
-    if not attacks_waiting(game, button):
-        return None
-    game.tap_match(button)
-    game.screen = None
-    deadline = game.clock() + OPEN_WAIT
-    while game.clock() < deadline:
-        game.wait(1.0, exact=True)
+    # On a phone COCFARM's own floating button sits, at first, where the war
+    # button is: it's taken off for the look and the tap (the screenshot
+    # would show it, not the swords, and the tap would land on it).
+    uncover = getattr(game.device, "uncover", None)
+    if uncover is not None:
+        uncover(True)
         game.refresh()
-        if on_war_screen(game):
-            game.wait(1.0, exact=True)  # (the map scrolls to its place)
+    try:
+        button = war_button(game)
+        if button is None:
+            return False
+        if not attacks_waiting(game, button):
+            return None
+        game.tap_match(button)
+        game.screen = None
+        deadline = game.clock() + OPEN_WAIT
+        while game.clock() < deadline:
+            game.wait(1.0, exact=True)
             game.refresh()
-            return True
-    return False
+            if on_war_screen(game):
+                game.wait(1.0, exact=True)  # (the map scrolls to its place)
+                game.refresh()
+                return True
+        log.info("War: the war button didn't open the war")
+        return False
+    finally:
+        if uncover is not None:
+            uncover(False)
 
 
 def leave(game: Game) -> None:
@@ -194,8 +212,32 @@ def show_enemy_map(game: Game) -> None:
 
 
 # -- a base's panel ----------------------------------------------------------
+def scout_button(game: Game):
+    """The open panel's Scout button, or None: no panel."""
+    return game.find(T.WAR_SCOUT, region=game.region(SCOUT_AREA))
+
+
 def panel_open(game: Game) -> bool:
-    return game.find(T.WAR_SCOUT, region=game.region(PANEL)) is not None
+    return scout_button(game) is not None
+
+
+def _size(scout) -> float:
+    """The panel's size, to the PC's."""
+    return scout.w / SCOUT_W
+
+
+def place(size: tuple[int, int], scout, point: tuple[int, int]) -> tuple[int, int]:
+    """``point`` of the panel as on the PC's screen, on a screen ``size``
+    (width, height) whose panel's Scout button is ``scout``."""
+    k = _size(scout)
+    return (round(size[0] / 2 + (point[0] - PC_SCREEN[0] / 2) * k),
+            round(size[1] + (point[1] - PC_SCREEN[1]) * k))
+
+
+def _placed(size: tuple[int, int], scout, rect: Rect) -> Rect:
+    x, y = place(size, scout, (rect.x, rect.y))
+    k = _size(scout)
+    return Rect(x, y, round(rect.w * k), round(rect.h * k))
 
 
 def open_panel(game: Game) -> str:
@@ -206,7 +248,9 @@ def open_panel(game: Game) -> str:
     if panel_open(game):
         return "any"
     label = game.find(T.WAR_RECOMMENDED)
-    spots = ([(label.x, label.y - LABEL_TO_BASE)] if label else []) + list(BASE_TAPS)
+    w, h = game.size
+    spots = ([(label.x, label.y - LABEL_TO_BASE)] if label else []) + [
+        (round(x * w / PC_SCREEN[0]), round(y * h / PC_SCREEN[1])) for x, y in BASE_TAPS]
     for i, (x, y) in enumerate(spots):
         game.tap(x, y)
         game.wait(1.2, exact=True)
@@ -218,30 +262,40 @@ def open_panel(game: Game) -> str:
     return ""
 
 
-def _title(game: Game) -> np.ndarray:
-    r = TITLE
+def _title(game: Game, scout) -> np.ndarray:
+    r = _placed(game.size, scout, TITLE)
     return game.refresh()[r.y:r.y + r.h, r.x:r.x + r.w].astype(np.int16)
 
 
 def step(game: Game, to: tuple[int, int]) -> bool:
-    """One base up or down with a panel arrow. False at the end of the map
-    (the panel still shows the same base)."""
-    before = _title(game)
-    game.tap(*to)
+    """One base up or down with a panel arrow (``to``: PREVIOUS or NEXT).
+    False at the end of the map (the panel still shows the same base)."""
+    scout = scout_button(game) if game.screen is not None else None
+    if scout is None:
+        game.refresh()
+        scout = scout_button(game)
+    if scout is None:
+        raise WarError("the base's panel closed while stepping through the bases")
+    before = _title(game, scout)
+    game.tap(*place(game.size, scout, to))
     game.wait(STEP_WAIT, exact=True)
-    after = _title(game)
+    after = _title(game, scout)
     if not panel_open(game):
         raise WarError("the base's panel closed while stepping through the bases")
     change = np.abs(after - before)
     return float(change.mean()) > 4.0 or int((change.max(axis=2) > 80).sum()) >= 12  # (or just its number)
 
 
-def stars(screen: np.ndarray) -> int:
+def stars(screen: np.ndarray, scout=None) -> int:
     """The stars taken from the base whose panel shows (its "Clan best
-    attack"), 0 if nobody attacked it yet."""
+    attack"), 0 if nobody attacked it yet. ``scout``: the panel's Scout
+    button (none: the panel as on the PC's screen)."""
     got = 0
+    half = STAR_HALF if scout is None else max(2, round(STAR_HALF * _size(scout)))
     for x, y in STARS:
-        patch = screen[y - STAR_HALF:y + STAR_HALF, x - STAR_HALF:x + STAR_HALF]
+        if scout is not None:
+            x, y = place((screen.shape[1], screen.shape[0]), scout, (x, y))
+        patch = screen[y - half:y + half, x - half:x + half]
         value = float(patch.max(axis=2).mean())
         if UNEARNED <= value <= EARNED:  # neither kind of star: the war win bonus shows there instead
             return 0
@@ -258,16 +312,17 @@ def survey(game: Game) -> tuple[list[Base], int]:
         start += 1
         if start > MOST_BASES:
             raise WarError("the bases never came to an end")
-    bases = [Base(1, stars(game.screen))]
+    bases = [Base(1, stars(game.screen, scout_button(game)))]
     while len(bases) < MOST_BASES and step(game, NEXT):
-        bases.append(Base(len(bases) + 1, stars(game.screen)))
+        bases.append(Base(len(bases) + 1, stars(game.screen, scout_button(game))))
     return bases, start
 
 
 def attack_button(game: Game):
     """The panel's orange Attack!, or None: greyed (no attacks left, or this
     account already attacked the base) or not there."""
-    match = game.find(T.WAR_ATTACK, region=game.region(PANEL))
+    scout = scout_button(game)
+    match = game.find(T.WAR_ATTACK, region=_placed(game.size, scout, PANEL)) if scout else None
     if match is None:
         return None
     patch = game.screen[match.y - 14:match.y + 14, match.x - 50:match.x + 50]

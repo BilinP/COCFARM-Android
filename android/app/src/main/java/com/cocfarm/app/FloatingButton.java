@@ -49,6 +49,7 @@ final class FloatingButton {
     private WindowManager.LayoutParams params;
     private volatile boolean botTouching;  // a bot gesture that crosses the button is playing
     private volatile boolean playerTouching;  // the player's finger is on the button: it stays put
+    private volatile boolean aside;  // off the screen while the bot looks at what it covers
 
     FloatingButton(TouchService service) {
         this.service = service;
@@ -77,7 +78,7 @@ final class FloatingButton {
             params.x = prefs.getBoolean("right", false) ? width - size : 0;
             params.y = clamp(Math.round(prefs.getFloat("down", 0.55f) * height), height - size);
             view.setOnTouchListener(new Drag());
-            view.setVisibility(overGame() ? View.VISIBLE : View.GONE);
+            view.setVisibility(shown() ? View.VISIBLE : View.GONE);
             view.setAlpha(0f);
             windows.addView(view, params);
             view.animate().alpha(1f).setDuration(200).start();
@@ -98,10 +99,23 @@ final class FloatingButton {
     void refresh() {
         main.post(() -> {
             if (view != null) {
-                view.setVisibility(overGame() ? View.VISIBLE : View.GONE);
+                view.setVisibility(shown() ? View.VISIBLE : View.GONE);
                 view.invalidate();
             }
         });
+    }
+
+    /**
+     * Off the screen (true) or back (false): it shows in the screenshots, and
+     * where it sits at first the game puts its clan war button.
+     */
+    void stepAside(boolean away) {
+        aside = away;
+        refresh();
+    }
+
+    private boolean shown() {
+        return overGame() && !aside;
     }
 
     private boolean overGame() {
@@ -271,13 +285,25 @@ final class FloatingButton {
         private float downX, downY;
         private int startX, startY;
         private boolean moved, held;
+        private boolean botsTouch;  // this touch is the bot's: its lift isn't a press either
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
             Face face = (Face) v;
-            switch (event.getActionMasked()) {
+            int action = event.getActionMasked();
+            if (action != MotionEvent.ACTION_DOWN && botsTouch) {
+                // The window is the button alone: the rest of a touch whose start it turned
+                // down still comes to it. Lifted, the bot's tap would have paused the farm
+                // (its tap on the clan war button, on a Galaxy A16, 26 Nov 2026).
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    botsTouch = false;
+                }
+                return false;
+            }
+            switch (action) {
                 case MotionEvent.ACTION_DOWN:
-                    if (botTouching) {
+                    botsTouch = botTouching;
+                    if (botsTouch) {
                         return false;  // the bot's tap, landing before the button let it through
                     }
                     playerTouching = true;

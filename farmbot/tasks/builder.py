@@ -31,7 +31,7 @@ import numpy as np
 from farmbot import human
 from farmbot.config import BuilderConfig
 from farmbot.tasks.search import Loot
-from farmbot.game import VIEW_AREA, VIEW_NEAR, VIEW_STILL, Game, T, view_change, view_shift
+from farmbot.game import VIEW_AREA, VIEW_NEAR, VIEW_STILL, Game, T, looked_late, view_change, view_shift
 from farmbot.tasks.build_list import asks_for_gems
 from farmbot.tasks import village
 from farmbot.vision import Match
@@ -946,6 +946,7 @@ def _confirm_walls(game: Game, timeout: float = 4) -> bool:
     price button."""
     deadline = game.clock() + timeout
     while True:
+        started = game.clock()
         game.refresh()
         okay = game.find(T.OKAY) if game.has(T.OKAY) else None
         button = (okay.x, okay.y) if okay else None
@@ -958,7 +959,7 @@ def _confirm_walls(game: Game, timeout: float = 4) -> bool:
                 return False
             game.tap(*button)
             return True
-        if game.clock() >= deadline:
+        if game.clock() >= deadline and looked_late(started, deadline, timeout):
             return False
         game.wait(0.5)
 

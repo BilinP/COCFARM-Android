@@ -42,6 +42,7 @@ GUARD_EVERY = 30  # seconds between looks at the battery
 RESUME_MARGIN = 5  # % battery, or °C: how far back it must come before farming carries on
 LOCK_LOOK = 1.0  # seconds between looks at a locked screen
 UNLOCK_SETTLE = 1.0  # seconds for the game to come back to life once unlocked
+BUTTON_GONE = 0.3  # seconds for the screen to be drawn again once the floating button is taken off
 HOME_GRACE = 15.0  # seconds the home screen may be in front before the game is taken to have crashed or closed
 WAIT_GIVE_UP = 30 * 60  # seconds a wait for the player (a locked screen, another app in front) lasts before the bot stops
 running_config = None  # the farming bot's settings: the settings screen changes them as it saves
@@ -108,8 +109,7 @@ class AndroidDevice:
 
     def _on_screen(self, x, y) -> tuple[int, int]:
         """A point on the game, where it is on the phone's screen (past any bars)."""
-        dx, dy = self.letterbox.offset
-        return int(x) + dx, int(y) + dy
+        return self.letterbox.place(x, y)
 
     def _in_game(self) -> None:
         """Touch only the game. While another app is in front (COCFARM's own
@@ -264,6 +264,14 @@ class AndroidDevice:
     def back(self) -> bool:
         self._in_game()
         return bool(Bridge.back())
+
+    def uncover(self, bare: bool) -> None:
+        """COCFARM's floating button off the game (``bare``) or back on it:
+        the screenshots show it, and at first it sits where the game puts
+        its clan war button. Once off, the next screenshot is one without it."""
+        Bridge.buttonAside(bool(bare))
+        if bare:
+            time.sleep(BUTTON_GONE)
 
     def type_text(self, text: str) -> None:
         raise NotImplementedError("typing isn't needed on Android")

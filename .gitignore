@@ -52,3 +52,6 @@ templates/redact/
 gui-changes.md
 gui-layout.md
 inv.json
+
+# Zip files, such as Android bug reports (adb bugreport, the emulator's Save bug report)
+*.zip

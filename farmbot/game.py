@@ -41,6 +41,15 @@ COARSE_MARGIN = 0.1  # how far below the threshold the half-size search may scor
 CALIBRATION_CONFIDENT = 0.90
 
 
+def looked_late(started: float, deadline: float, timeout: float) -> bool:
+    """Whether a look that ``started`` then may end a wait until ``deadline``:
+    it began in the wait's second half. On a phone a search that finds
+    nothing can take longer than the whole wait (Add Wall, tried at several
+    sizes: over 4 s), and its one look came before the tap had shown
+    anything: it is looked at once more."""
+    return started >= deadline - timeout / 2
+
+
 def normalize(image: np.ndarray, height: int = REFERENCE_HEIGHT, ui_scale: float = 1.0) -> np.ndarray:
     """Scale a screenshot to the reference height every coordinate is given in."""
     h, w = image.shape[:2]
@@ -1281,9 +1290,10 @@ class Game:
     def wait_for(self, name: str, timeout: float, interval: float = 0.5, threshold: float | None = None) -> Match | None:
         deadline = self.clock() + timeout
         while True:
+            started = self.clock()
             self.refresh()
             match = self.find(name, threshold)
-            if match or self.clock() >= deadline:
+            if match or (self.clock() >= deadline and looked_late(started, deadline, timeout)):
                 return match
             self.wait(interval, exact=True)  # a poll: see wait()
 
