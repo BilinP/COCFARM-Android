@@ -767,10 +767,12 @@ class Bot:
             log.info("Playing on %s", diag.describe_facts(found))
 
     def _diagnostics(self) -> str:
-        """The emulator and the scales the bot is using, the screen's size and
+        """The emulator (or the phone) and the scales the bot is using, the screen's size and
         what it last made of it, and what it was at: for a failure's log line."""
         g = self.game
-        said = [f"emulator {self.config.device.mode}", f"UI scale {g.ui_scale or 1.0:.2f}",
+        phone = getattr(g.device, "phone_name", None)  # (on a phone, the emulator setting means nothing)
+        where = f"phone {phone}".strip() if isinstance(phone, str) else f"emulator {self.config.device.mode}"
+        said = [where, f"UI scale {g.ui_scale or 1.0:.2f}",
                 f"window scale {g.window_scale or g.vision.window_scale:.2f}"]
         screen = getattr(g, "screen", None)
         if screen is not None and hasattr(screen, "shape"):

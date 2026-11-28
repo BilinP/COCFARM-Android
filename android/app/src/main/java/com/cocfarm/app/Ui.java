@@ -79,6 +79,23 @@ final class Ui {
         context.startActivity(android.content.Intent.createChooser(send, title));
     }
 
+    /** Several files of COCFARM's folder at once (the log and its error screens). */
+    static void shareAll(Context context, java.util.List<java.io.File> files, String title) {
+        java.util.ArrayList<android.net.Uri> uris = new java.util.ArrayList<>();
+        android.content.ClipData clip = null;
+        for (java.io.File file : files) {
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, "com.cocfarm.app.files", file);
+            uris.add(uri);
+            if (clip == null) clip = android.content.ClipData.newRawUri(file.getName(), uri);
+            else clip.addItem(new android.content.ClipData.Item(uri));
+        }
+        android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).setType("*/*")
+                .putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        send.setClipData(clip);  // (the permission reaches every file through it)
+        context.startActivity(android.content.Intent.createChooser(send, title));
+    }
+
     /** Buttons side by side, sharing the width. */
     static LinearLayout buttons(Context context, View... buttons) {
         LinearLayout row = new LinearLayout(context);

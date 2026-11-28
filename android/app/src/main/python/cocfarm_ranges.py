@@ -140,7 +140,7 @@ NUMBERS = {
     "builder.walls_keep_elixir": (0, 100, 5, {}),
     # The builder base's builders: none, all but one, or 1-3.
     "builder.upgrade_builders": (-1, 3, 1, {-1: NONE, 0: "All but one"}),
-    # Battery: pause below 0-95% (0: never), by 5; above 30-60 °C by 1 (0: never).
+    # Battery: pause below 0-95% (0: never), by 5, and 1% (the default); above 30-60 °C by 1 (0: never).
     "battery.pause_below": (0, 95, 5, {0: NEVER}),
     "battery.pause_above": (30, 60, 1, {0: NEVER}),
     # Breaks: every 5-300 attacks, for 5-240 min, by 5; a day off every 2-30 days (0: never).
@@ -153,6 +153,10 @@ NUMBERS = {
     "schedule.daily_attacks_min": (0, 1000, 10, {}),
     "schedule.daily_attacks_max": (0, 1000, 10, {}),
 }
+
+# Values that are choices though they fall between two steps: the default, which picking
+# another value must not lose.
+OFF_STEP = {"battery.pause_below": (1,)}
 
 # Amounts that may be empty, and the word for it: the first choice.
 EMPTY = {
@@ -239,6 +243,10 @@ def scroller(path: str, th: int | None, unit: str = "", resource: str = "gold") 
         number = low + i * step
         number = int(number) if float(number).is_integer() else round(number, 3)
         choices.append([_written(path, number), words.get(number, _shown(number, unit)), number])
+    extra = [n for n in OFF_STEP.get(path, ()) if low <= n <= high and all(c[2] != n for c in choices)]
+    if extra:
+        choices += [[_written(path, n), words.get(n, _shown(n, unit)), n] for n in extra]
+        choices.sort(key=lambda c: c[2])
     # The stepped range's ends: a saved value outside them is shown at the nearer one.
     return {"choices": choices, "low": low, "high": high}
 

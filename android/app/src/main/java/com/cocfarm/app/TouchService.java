@@ -92,7 +92,14 @@ public class TouchService extends AccessibilityService {
         // game: it's still the app in front.
         boolean ownOverlay = app.equals(getPackageName())
                 && (event.getClassName() == null || !event.getClassName().toString().startsWith(getPackageName()));
-        if (!app.equals("com.android.systemui") && !app.contains("inputmethod") && !ownOverlay) {
+        // So does Google Play Games' "Welcome back" banner as the game comes back: a window of
+        // Google Play services, after which the game sends no event of its own, so it stayed
+        // "in front" and the bot restarted a game that was running (BlueStacks, 27 Nov 2026).
+        boolean playServices = app.equals("com.google.android.gms");
+        if (playServices) {
+            android.util.Log.i("COCFARM", "Google Play services window over the game: " + event.getClassName());
+        }
+        if (!app.equals("com.android.systemui") && !app.contains("inputmethod") && !ownOverlay && !playServices) {
             foreground = app;
             if (button != null) {
                 button.refresh();

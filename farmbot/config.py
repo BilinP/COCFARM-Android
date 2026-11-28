@@ -533,7 +533,7 @@ class HumanConfig:
     enabled: bool = True
     tap_spread: bool = True  # taps land around their point, not on one pixel
     tap_hold: bool = True  # each tap held down its own short while
-    waits: bool = True  # waits after a tap run a touch longer; the rest between rounds varies
+    waits: bool = False  # waits after a tap run a touch longer; the rest between rounds varies
     swipes: bool = True  # swipes start a little off and vary in speed
     curved_swipes: bool = False  # ...along a slight curve, quick in the middle (written to the touchscreen)
     chore_order: bool = True  # the village's jobs in a different order each round
@@ -585,7 +585,7 @@ class BatteryConfig:
     at the next safe point, and carries on once it's all right again."""
 
     only_while_charging: bool = False
-    pause_below: int = 15  # % battery: pause below it (resumes 5 points higher); 0: never
+    pause_below: int = 1  # % battery: pause below it (resumes 5 points higher); 0: never
     pause_above: int = 45  # °C, the battery's temperature: pause above it (resumes 5° lower); 0: never
 
 

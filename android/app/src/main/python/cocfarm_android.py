@@ -106,6 +106,8 @@ class AndroidDevice:
         # The phone's language, for farmbot.language's "the game may not be in English" (read over
         # an emulator's shell on Windows): Clash of Clans starts in it.
         self._android_language = _phone_language()
+        # For a failure's log line, in place of the emulator setting (unused on a phone).
+        self.phone_name = _phone_name()
 
     def _on_screen(self, x, y) -> tuple[int, int]:
         """A point on the game, where it is on the phone's screen (past any bars)."""
@@ -406,6 +408,18 @@ def _new_session() -> None:
     _session.update(started=time.time(), state="running", headline="Starting", detail="", bases=0, attacks=0,
                     gained=[0, 0, 0], base=None, attack=None, problem=None,
                     builder={"battles": 0, "second": 0, "gold": 0, "elixir": 0, "last": None})
+
+
+def _phone_name() -> str:
+    """"Samsung SM-A165F": the phone's maker and model ("" if not known)."""
+    try:
+        build = jclass("android.os.Build")
+        maker, model = str(build.MANUFACTURER or "").strip(), str(build.MODEL or "").strip()
+    except Exception:  # not known: the log line says "phone"
+        return ""
+    if maker and not model.lower().startswith(maker.lower()):
+        model = f"{maker[:1].upper()}{maker[1:]} {model}"
+    return model.strip()
 
 
 def _phone_language() -> str | None:

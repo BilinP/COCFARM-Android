@@ -130,14 +130,26 @@ def _loot_number(game: Game, regions: RegionsConfig, name: str) -> int | None:
     return found
 
 
-def read_loot(game: Game, regions: RegionsConfig) -> Loot | None:
+def read_loot(game: Game, regions: RegionsConfig, reads: list | None = None) -> Loot | None:
+    """The base's loot, or None if gold or elixir can't be read. ``reads``: each
+    number as read (None: not read) is added to it, for the log when it fails."""
     gold = _loot_number(game, regions, "loot_gold")
     elixir = _loot_number(game, regions, "loot_elixir")
+    known = gold is not None and elixir is not None
+    dark = _loot_number(game, regions, "loot_dark") if known or reads is not None else None
+    if reads is not None:
+        reads.append((gold, elixir, dark))
     if gold is None or elixir is None:
         return None
     # Dark elixir is absent on low town halls; treat unreadable as zero.
-    dark = _loot_number(game, regions, "loot_dark") or 0
-    return Loot(gold, elixir, dark)
+    return Loot(gold, elixir, dark or 0)
+
+
+def describe_reads(reads: list) -> str:
+    """"985,746 / ? / 7,698; ...": each reading of gold / elixir / dark, for a failure's log line."""
+    def one(n):
+        return "?" if n is None else f"{n:,}"
+    return "; ".join(" / ".join(one(n) for n in read) for read in reads) or "none"
 
 
 # A loot boost (a food item, 16 Nov 2026) shows "Loot Available 2x:" over a
@@ -185,16 +197,17 @@ def unboosted(loot: Loot, boost: int) -> Loot:
 SETTLE_READS = 4  # tries at a steady reading of a base's loot
 
 
-def read_settled_loot(game: Game, regions: RegionsConfig, interval: float = 0.3) -> Loot | None:
+def read_settled_loot(game: Game, regions: RegionsConfig, interval: float = 0.3,
+                      reads: list | None = None) -> Loot | None:
     """The base's loot once two readings in a row agree: the counters
     count up when a base loads, and a reading mid-way is wrong. ``None``
-    if it never reads the same twice."""
+    if it never reads the same twice. ``reads``: as for :func:`read_loot`."""
     last = None
     for attempt in range(SETTLE_READS):
         if attempt:
             game.wait(interval)
             game.refresh()
-        loot = read_loot(game, regions)
+        loot = read_loot(game, regions, reads)
         if loot is not None and loot == last:
             return loot
         last = loot
@@ -623,6 +636,22 @@ def same_base(before, after) -> bool:
 MAX_UNREADABLE = 3  # bases in a row whose loot can't be read before giving up
 
 
+def _unread_loot(game: Game, regions: RegionsConfig, reads: list) -> str:
+    """What the loot reader saw, for the log: each reading (gold / elixir / dark,
+    "?" not read), where it looked on the screen, and what the screen was."""
+    gold = game.region(regions.rect("loot_gold"))
+    shape = getattr(game.screen, "shape", None)
+    size = f"{shape[1]}x{shape[0]}" if shape is not None else "?"
+    try:
+        from farmbot import screens
+
+        seen = screens.identify(game, refresh=False).value
+    except Exception:  # (only for the log)
+        seen = "?"
+    return (f"reads {describe_reads(reads)}; gold looked for at {gold.x},{gold.y} {gold.w}x{gold.h} "
+            f"on {size}; the screen: {seen}")
+
+
 def search(game: Game, criteria: SearchConfig, regions: RegionsConfig, on_base: BaseCallback | None = None,
            zoom_out: bool = False, look: bool = False, near: bool = False) -> Loot:
     """Press Next until a base meets ``criteria``; returns its loot.
@@ -647,19 +676,21 @@ def search(game: Game, criteria: SearchConfig, regions: RegionsConfig, on_base: 
         if count == 1 and zoom_out:
             game.zoom_out()
         game.refresh()
-        loot = read_settled_loot(game, regions)
+        reads: list = []
+        loot = read_settled_loot(game, regions, reads=reads)
         if loot is None and not zoomed:
             # The battle opens at the village's zoom: left zoomed in on an
             # upgrade, the base's health bars can sit over the numbers.
             zoomed = True
             game.zoom_out()
-            loot = read_settled_loot(game, regions)
+            loot = read_settled_loot(game, regions, reads=reads)
         if loot is None:
             unreadable += 1
+            said = _unread_loot(game, regions, reads)
             if unreadable >= MAX_UNREADABLE:
                 raise LootUnreadable(f"could not read available loot on {unreadable} bases in a row (UI scale "
-                                     f"{game.ui_scale or 1.0:.2f}); check regions and the loot font")
-            log.warning("Base %d: loot OCR failed; skipping it", count)
+                                     f"{game.ui_scale or 1.0:.2f}; {said}); check regions and the loot font")
+            log.warning("Base %d: loot not read, skipping it (%s)", count, said)
             _press_next(game, criteria.next_delay)
             continue
         unreadable = 0

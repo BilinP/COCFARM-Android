@@ -18,6 +18,22 @@ from farmbot.update import STATE, _load, _save, parse_version
 KINDS = ["New", "Improved", "Fixed"]
 
 NOTES: dict[str, list[tuple[str, str, str]]] = {
+    "1.9.7": [
+        ("Fixed", "Google Play Games' banner no longer ends a round",
+         "Its \"Welcome back\" banner over the game was taken for another app in front, so the round failed and "
+         "the game was restarted; the game now stays in front under it."),
+        ("Improved", "Share log sends the error screens too",
+         "A failed round saves the screen in COCFARM's own folder, which a phone's file manager can't open: Share "
+         "log now sends the newest 6 of them with the log."),
+        ("Improved", "Clearer log lines when something goes wrong",
+         "A failure names your phone instead of an emulator, and a base whose loot can't be read says what was read "
+         "and where."),
+        ("Improved", "No more long waits between rounds",
+         "\"Waits run a touch longer\" is now off at first: the rest between rounds stretched to as much as 3 "
+         "minutes and looked like the farm had stopped. It can be switched on under Like a person."),
+        ("Improved", "Plays down to 1% battery",
+         "The battery pause now starts at 1% rather than 15%, and 1% can be picked in Settings."),
+    ],
     "1.9.6": [
         ("Fixed", "Clan war attacks on phones",
          "War attacks now work on a phone: the war is found and opened, the base's panel and Confirm Attack are "

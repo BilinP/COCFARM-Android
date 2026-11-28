@@ -47,7 +47,7 @@ ERROR_LEVELS = ("ERROR", "CRITICAL")
 _LEVEL = re.compile(r"^\S+ \S+ (\w+)\s")  # "2026-11-12 10:00:00,123 ERROR   ..."
 # "2026-11-12 10:00:00,123 ERROR   [farm 2] farmbot.bot: Cycle failed ..."
 _RECORD = re.compile(r"^(\d{4})-(\d\d-\d\d) (\d\d:\d\d):\S+ (\w+)\s+(?:\[farm (\d+)\] )?[\w.]+: (.*)$")
-_DIAGNOSTICS = re.compile(r" \[emulator [^\]]*\]$")  # (a failure's own details: they differ every time)
+_DIAGNOSTICS = re.compile(r" \[(?:emulator|phone)\b[^\]]*\]$")  # (a failure's own details: they differ every time)
 ERRORS_SHOWN = 20
 WARNINGS_SHOWN = 8
 

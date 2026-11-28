@@ -27,6 +27,7 @@ import java.io.File;
 final class LogPage {
     private static final int WARNING = 30, ERROR = 40;  // Python's logging levels
     private static final long POLL_MS = 1000;
+    private static final int SCREENS_SHARED = 6;  // the newest error screens sent with the log
     private final Context context;
     private final String folder;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -49,7 +50,9 @@ final class LogPage {
         view = Ui.column(context);
         LinearLayout content = Ui.inside(view);
         TextView about = Ui.text(context, "This run, as it happens. For a bug report, Copy report puts the log's last part"
-                        + " on the clipboard with names, tags and links taken out, ready to paste into a GitHub issue.",
+                        + " on the clipboard with names, tags and links taken out, ready to paste into a GitHub issue."
+                        + " Share log sends the log with the screens saved when something went wrong (the newest "
+                        + SCREENS_SHARED + "): they show the game as the bot saw it.",
                 com.google.android.material.R.style.TextAppearance_Material3_BodySmall, R.color.cf_muted);
         about.setPadding(Ui.dp(context, 4), Ui.dp(context, 12), Ui.dp(context, 4), 0);
         content.addView(about);
@@ -177,6 +180,26 @@ final class LogPage {
             Ui.snack(lines, "No log file yet: it starts with the first run.", Snackbar.LENGTH_SHORT).show();
             return;
         }
-        Ui.share(context, log, "text/plain", "Share the log");
+        java.util.List<File> screens = errorScreens();
+        if (screens.isEmpty()) {
+            Ui.share(context, log, "text/plain", "Share the log");
+            return;
+        }
+        java.util.List<File> files = new java.util.ArrayList<>();
+        files.add(log);
+        files.addAll(screens);
+        Ui.shareAll(context, files, "Share the log and " + screens.size() + " error screen" + (screens.size() == 1 ? "" : "s"));
+    }
+
+    /** The newest screens saved when a round failed (screens/errors): Android's own file
+     * manager can't open COCFARM's folder, so this is the way to get them off the phone. */
+    private java.util.List<File> errorScreens() {
+        File[] found = new File(folder, "screens/errors").listFiles(
+                f -> f.isFile() && (f.getName().endsWith(".png") || f.getName().endsWith(".jpg")));
+        java.util.List<File> screens = new java.util.ArrayList<>();
+        if (found == null) return screens;
+        java.util.Arrays.sort(found, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        for (int i = 0; i < Math.min(SCREENS_SHARED, found.length); i++) screens.add(found[i]);
+        return screens;
     }
 }
